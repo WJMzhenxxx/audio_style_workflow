@@ -1,0 +1,8 @@
+# 本地 MusicFlamingo 分析端点（可选）
+# 用法: python -m audio_style_workflow.main <目录> --local
+# 权重下载加速（国内）: set HF_ENDPOINT=https://hf-mirror.com
+-r requirements.txt
+
+torch>=2.1
+transformers>=4.53
+accelerate>=1.0

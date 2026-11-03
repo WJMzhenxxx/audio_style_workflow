@@ -1,0 +1,9 @@
+-r requirements.txt
+
+pytest>=8.0
+fastapi>=0.110
+python-multipart>=0.0.9
+uvicorn>=0.29
+
+# LLM 兜底解析（可选，不启用可不装）
+langchain-openai>=0.2
