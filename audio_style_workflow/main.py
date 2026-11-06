@@ -52,7 +52,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     client.add_argument("--mock", action="store_true", help="使用进程内 Mock 端点（无需网络，用于联调）")
     client.add_argument("--mock-freeform", action="store_true", help="Mock 返回非结构化内容（配合 --llm-model 验证 LLM 兑底）")
     client.add_argument("--local", action="store_true", help="使用本地 MusicFlamingo 模型分析（离线推理，需 pip install -r requirements-local.txt）")
-    client.add_argument("--sglang", nargs="?", const=DEFAULT_SGLANG_BASE, metavar="BASE_URL", help="使用 sglang 部署的音乐理解模型（音频传本地路径，需与服务共享文件系统；默认 http://localhost:30000）")
+    client.add_argument("--sglang", nargs="?", const=os.environ.get("SGLANG_BASE", DEFAULT_SGLANG_BASE), metavar="BASE_URL", help="使用 sglang 部署的音乐理解模型（音频传本地路径，需与服务共享文件系统；不带值时读环境变量 SGLANG_BASE，再回退 http://localhost:30000）")
+    client.add_argument("--sglang-base", default=None, metavar="BASE_URL", help="显式指定 sglang 服务基地址（等价于 --sglang BASE_URL；也可用环境变量 SGLANG_BASE）")
     client.add_argument("--sglang-api", choices=["generate", "chat"], default="generate", help="sglang API 模式：generate=/generate 基础模式；chat=/v1/chat/completions（OpenAI 兼容）")
     client.add_argument("--sglang-thinking-budget", type=int, default=None, metavar="N", help="chat 模式下开启 thinking 分离并限制思考 token 数（如 50）")
     client.add_argument("--model-id", default=os.environ.get("SONG_ANALYZER_MODEL_ID", "nvidia/music-flamingo-2601-hf"), help="本地 MusicFlamingo 模型 ID（配合 --local）")
@@ -84,13 +85,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def build_client(args: argparse.Namespace):
-    modes = [bool(args.local), bool(args.mock), args.sglang is not None]
+    sglang_endpoint = args.sglang_base or args.sglang
+    modes = [bool(args.local), bool(args.mock), sglang_endpoint is not None]
     if sum(modes) > 1:
         raise ValueError("--local / --mock / --sglang 互斥，请只选一种分析端点")
-    if args.sglang is not None:
+    if sglang_endpoint is not None:
         return create_client(
             "sglang",
-            endpoint=args.sglang,
+            endpoint=sglang_endpoint,
             api_mode=args.sglang_api,
             thinking_budget=args.sglang_thinking_budget,
             max_new_tokens=args.max_new_tokens,
@@ -109,7 +111,7 @@ def build_client(args: argparse.Namespace):
         raise ValueError(
             "未提供 --endpoint（或环境变量 SONG_ANALYZER_ENDPOINT）；"
             "联调可加 --mock，离线推理可加 --local，"
-            "sglang 部署的音乐模型可加 --sglang [BASE_URL]"
+            "sglang 部署的音乐模型可加 --sglang [BASE_URL]（或 --sglang-base BASE_URL）"
         )
     return create_client(
         "http",

@@ -97,10 +97,19 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --skip-scanned
 # 模式2：/v1/chat/completions（OpenAI 兼容）+ thinking 分离 + budget 控制
 python -m audio_style_workflow.main "D:\我的音乐" --sglang http://localhost:30000 \
     --sglang-api chat --sglang-thinking-budget 50 --max-new-tokens 1024
+
+# 或用独立参数 --sglang-base 指定地址（等价写法）
+python -m audio_style_workflow.main "D:\我的音乐" --sglang-base http://192.168.1.10:30000 \
+    --sglang-api chat --sglang-thinking-budget 50
+
+# 或用环境变量 SGLANG_BASE（优先级：--sglang-base > --sglang BASE_URL > SGLANG_BASE > 默认）
+set SGLANG_BASE=http://192.168.1.10:30000
+python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-api chat
 ```
 
-参数说明：`--sglang [BASE_URL]` 不带值时默认 `http://localhost:30000`；
-`--sglang-thinking-budget N` 自动附带 `separate_reasoning` 与
+参数说明：`--sglang [BASE_URL]` 不带值时读环境变量 `SGLANG_BASE`，再回退
+`http://localhost:30000`；`--sglang-base BASE_URL` 是显式指定地址的等价形式
+（优先级最高）。`--sglang-thinking-budget N` 自动附带 `separate_reasoning` 与
 `custom_logit_processor`（Qwen3InstructionInjectionThinkingBudgetLogitProcessor
 的惯用字符串，可用 `custom_logit_processor` 参数编程覆盖）。
 推理结果同样统一解析为 `styles` + `description`，下游流程不变。

@@ -271,14 +271,44 @@ def _parse_cli(tmp_path, *extra):
     return build_arg_parser().parse_args([str(tmp_path), *extra])
 
 
-def test_cli_sglang_defaults(tmp_path):
+def test_cli_sglang_defaults(tmp_path, monkeypatch):
     from audio_style_workflow.main import build_client
 
+    monkeypatch.delenv("SGLANG_BASE", raising=False)
     args = _parse_cli(tmp_path, "--sglang")
     client = build_client(args)
     assert isinstance(client, SglangMusicClient)
     assert client.endpoint == DEFAULT_SGLANG_BASE
     assert client.api_mode == "generate"
+
+
+def test_cli_sglang_env_default(tmp_path, monkeypatch):
+    from audio_style_workflow.main import build_client
+
+    monkeypatch.setenv("SGLANG_BASE", "http://env-sglang:30000")
+    args = _parse_cli(tmp_path, "--sglang")
+    client = build_client(args)
+    assert client.endpoint == "http://env-sglang:30000"
+
+
+def test_cli_sglang_base_option(tmp_path, monkeypatch):
+    from audio_style_workflow.main import build_client
+
+    monkeypatch.delenv("SGLANG_BASE", raising=False)
+    args = _parse_cli(tmp_path, "--sglang-base", "http://explicit-host:30000",
+                      "--sglang-api", "chat", "--sglang-thinking-budget", "50")
+    client = build_client(args)
+    assert client.endpoint == "http://explicit-host:30000"
+    assert client.api_mode == "chat"
+    assert client.thinking_budget == 50
+
+
+def test_cli_sglang_base_overrides_env(tmp_path, monkeypatch):
+    from audio_style_workflow.main import build_client
+
+    monkeypatch.setenv("SGLANG_BASE", "http://env-sglang:30000")
+    args = _parse_cli(tmp_path, "--sglang-base", "http://cli:9000")
+    assert build_client(args).endpoint == "http://cli:9000"
 
 
 def test_cli_sglang_custom(tmp_path):
@@ -296,7 +326,9 @@ def test_cli_sglang_custom(tmp_path):
 def test_cli_sglang_conflicts_with_local_and_mock(tmp_path):
     from audio_style_workflow.main import build_client
 
-    for extra in (["--sglang", "--local"], ["--sglang", "--mock"], ["--local", "--mock"]):
+    for extra in (["--sglang", "--local"], ["--sglang", "--mock"], ["--local", "--mock"],
+                  ["--sglang-base", "http://x:1", "--local"],
+                  ["--sglang-base", "http://x:1", "--mock"]):
         args = _parse_cli(tmp_path, *extra)
         with pytest.raises(ValueError):
             build_client(args)
