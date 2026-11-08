@@ -308,35 +308,38 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 
 ### 提高识别准确率（子流派识别不准时）
 
-模型把 K-Pop 说成 Pop 这类「子流派判粗」，通常不是模型坏了，而是信息不够或输出被摊薄。
-按性价比从高到低：
+**先量一下模型到底"听"了多少**，别凭感觉。用 `prompt_tokens` 判断：
+
+| 送什么 | 整首被摄入 | 有硬上限/只听开头 |
+| --- | --- | --- |
+| 全文 362s | ~5126 | ~5126 |
+| 前 30s | ~520 | ~5126 |
+| 中间 60s | ~930 | ~5126 |
+
+（实测 `Aphonia.mp3` 362.7s → `prompt_tokens=5126`，减去文本 prompt 约 105 token，
+音频约 5021 token，折合 **≈13.8 token/秒**，呈线性——说明整首大概率都被编码了，
+**不是**只听了开头。）
 
 ```bash
-# ① 只送中段 60 秒：避开前奏，让模型听到主歌/副歌（最可能有效，请求也从 57MB 降到 2.5MB）
---sglang-clip 60
+# A) 全文
+python examples/probe_sglang.py "music/Aphonia.mp3" \
+    --base-url http://10.0.0.5:43449 --base64 --api generate
 
-# ② 从头 90 秒（如果歌曲一上来就是标志性段落）
---sglang-clip 90 --sglang-clip-mode start
-
-# ③ 关掉多余字段，让它专注给标签（用极简 prompt 单独跑一遍对比）
-#    见 examples/probe_sglang.py --prompt "..."
+# B) 前 30 秒（数字骤降 = 线性摄入；数字不变 = 有上限）
+python examples/probe_sglang.py "music/Aphonia.mp3" \
+    --base-url http://10.0.0.5:43449 --base64 --api generate --clip 30 --clip-mode start
 ```
 
-其他可叠加的手段：
+确认摄入方式后，再选手段：
 
-1. **prompt 已要求「最具体的子流派优先，最多 5 个」**，并列出 K-Pop / City Pop / J-Pop /
-   Neo-Soul 等示例，减少退化成笼统 `Pop`；
-2. **别名归一化**：`kpop` / `Korean Pop` / `케이팝` / `韩流` 都会统一成 `K-Pop`，
-   `citypop` → `City Pop`，`rnb` → `R&B` 等；
-3. **多采样投票**：同一首跑 `--temperature` 非 0 的 N 次再取交集/多数（需改客户端参数，
-   当前 `temperature=0.0` 是贪心解码，最"安全"的答案往往就是 Pop）；
-4. **二段式**：先用极简 prompt（只问流派）拿候选，再用详情 prompt 复核；比一次问 8 个字段更专注；
-5. **LLM 复核**：`--llm-model` 已能兜底解析，也可以让它把候选归一到你的词表；
-6. **换更大的模型**：MOSS-Music 8B 对文化性/地域性子流派（K-Pop、City Pop）本来就偏弱，
-   这类判断更适合带文化先验的模型或人工规则补充。
-
-判断"是不是截断导致的"很简单：同一首歌各跑一次 `--sglang-clip 60` 和不加截取，
-看 `log/Genre description/*.txt` 的结论是否变化。
+| 手段 | 适用 | 说明 |
+| --- | --- | --- |
+| `--sglang-clip N` | 降本 / 定向实验 | 只送 N 秒（默认中段）。**整本已摄入时截取会丢信息**，可能更不准 |
+| prompt 要求"最具体子流派优先" | 输出笼统（只给 Pop） | 已内置，并列出 K-Pop / City Pop 等示例 |
+| 别名归一化 | 写法不统一 | `kpop`/`韩流` → `K-Pop`，`citypop` → `City Pop` … |
+| 多采样投票 | 偶发漏判 | `temperature>0` 跑 N 次取多数；当前 `temperature=0.0` 是最保守的贪心解码 |
+| 二段式提问 | 8 个字段摊薄注意力 | 先只问流派/语言，再问其余 |
+| LLM 复核 / 换更大模型 | 文化性子流派（K-Pop、City Pop） | 8B 模型对地域风格本就偏弱 |
 
 ### 中断后怎么续跑
 

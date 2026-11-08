@@ -62,6 +62,41 @@ def _audio_field(path: Path, base64_mode: bool, base_url: str, path_map: str | N
     return resolved
 
 
+def _clip(path: Path, seconds: int, mode: str):
+    """用 ffmpeg 截取一段 16k 单声道 WAV，便于对比 prompt_tokens。"""
+    import shutil
+    import subprocess
+    import tempfile
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    out_dir = Path(tempfile.mkdtemp(prefix="probe_clip_"))
+    out = out_dir / "clip.wav"
+    start = "0"
+    if mode == "middle":
+        # 近似中段：用 ffprobe 拿时长
+        try:
+            dur = subprocess.run(
+                [ffmpeg.replace("ffmpeg", "ffprobe"), "-v", "error",
+                 "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
+                capture_output=True, text=True,
+            ).stdout.strip()
+            total = float(dur)
+            if total > seconds:
+                start = f"{max(0.0, (total - seconds) / 2):.3f}"
+        except Exception:
+            start = "0"
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+           "-ss", start, "-t", str(seconds), "-i", str(path),
+           "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out)]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except Exception:
+        return None
+    return out if out.is_file() else None
+
+
 def build_payload(args, audio_field: str) -> dict:
     if args.api == "generate":
         return {
@@ -94,6 +129,9 @@ def main(argv=None) -> int:
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--base64", action="store_true", help="以 data URL 内联音频")
     parser.add_argument("--path-map", default=None, help="LOCAL=REMOTE，路径模式下使用")
+    parser.add_argument("--clip", type=int, default=0, metavar="SECONDS",
+                        help="只送这么多秒（0=整首）；用来看 prompt_tokens 是否随长度线性变化")
+    parser.add_argument("--clip-mode", choices=["middle", "start"], default="middle")
     parser.add_argument("--timeout", type=float, default=600.0)
     parser.add_argument("--head", type=int, default=3000, help="原始 JSON 打印长度")
     args = parser.parse_args(argv)
@@ -102,7 +140,15 @@ def main(argv=None) -> int:
         print(f"[错误] 音频不存在: {args.audio}", file=sys.stderr)
         return 2
 
-    audio_field = _audio_field(args.audio, args.base64, args.base_url, args.path_map)
+    source = args.audio
+    if args.clip > 0:
+        source = _clip(args.audio, args.clip, args.clip_mode)
+        if source is None:
+            print("[错误] ffmpeg 截取失败", file=sys.stderr)
+            return 2
+        print(f"截取      : {args.clip}s ({args.clip_mode}) -> {source}")
+
+    audio_field = _audio_field(source, args.base64, args.base_url, args.path_map)
     if audio_field.startswith("data:"):
         head, _, body = audio_field.partition(",")
         shown = f"{head},<{len(body)} base64 chars>"
@@ -143,6 +189,8 @@ def main(argv=None) -> int:
 
     if args.api == "generate":
         model_text = data.get("text")
+        meta = data.get("meta_info") or {}
+        print(f"prompt_tokens: {meta.get('prompt_tokens')}  (音频是否线性摄入看这里)")
         print(f"text      : {model_text!r}"[:600])
     else:
         choice = (data.get("choices") or [{}])[0]
