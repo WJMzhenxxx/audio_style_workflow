@@ -47,6 +47,7 @@ thinking budget 说明：设置 ``thinking_budget`` 时必须同时提供
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import logging
@@ -78,6 +79,21 @@ SGLANG_PROCESSOR_MODULE = "sglang.srt.sampling.custom_logit_processor"
 ENV_CUSTOM_LOGIT_PROCESSOR = "SGLANG_CUSTOM_LOGIT_PROCESSOR"
 
 ApiMode = Literal["generate", "chat"]
+
+#: 后缀 -> MIME（sglang 只认 ``data:`` 前缀，MIME 本身不参与解码，写对更规范）
+_AUDIO_MIME = {
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".tta": "audio/x-tta",
+    ".wma": "audio/x-ms-wma",
+}
+#: base64 内联超过该大小时提示（体积膨胀约 33%）
+_BASE64_WARN_BYTES = 20 * 1024 * 1024
 
 
 class ProcessorResolveError(ValueError):
@@ -210,6 +226,7 @@ class SglangMusicClient(SongAnalysisClient):
         thinking_budget: Optional[int] = None,
         custom_logit_processor: Optional[str] = None,
         audio_path_map: Optional[Sequence[tuple[str, str]]] = None,
+        audio_base64: bool = False,
         timeout: float = 600.0,
         retries: int = 2,
         transport: Optional[Any] = None,
@@ -241,6 +258,8 @@ class SglangMusicClient(SongAnalysisClient):
             (os.path.normpath(str(local)), str(remote).rstrip("/\\") or "/")
             for local, remote in (audio_path_map or [])
         ]
+        #: 为 True 时把音频以 data URL（base64）内联进请求，无需共享文件系统
+        self.audio_base64 = bool(audio_base64)
 
         #: 连续返回相同文本的计数（用于诊断"音频没被读到"）
         self._last_text_digest: Optional[str] = None
@@ -265,6 +284,37 @@ class SglangMusicClient(SongAnalysisClient):
     # ------------------------------------------------------------------
     # 分析
     # ------------------------------------------------------------------
+    def _audio_payload(self, audio_path: Path) -> str:
+        """把音频转成发给服务端的字符串。
+
+        - 默认：服务端可见的路径（``audio_path_map`` 映射后）；
+        - ``audio_base64=True``：``data:<mime>;base64,<...>`` 内联，
+          不依赖共享文件系统。sglang 的 ``load_audio`` 只认 ``data:`` 前缀，
+          裸 base64 会被当成文件路径，所以这里必须带 ``data:`` 头。
+        """
+        audio_path = Path(audio_path)
+        if not self.audio_base64:
+            return self._server_path(audio_path)
+
+        size = audio_path.stat().st_size
+        if size > _BASE64_WARN_BYTES:
+            logger.warning(
+                "[sglang] %s 体积 %.1f MB，base64 内联后约 %.1f MB，请求会明显变慢；"
+                "大文件建议改用 --sglang-path-map + 共享文件系统",
+                audio_path.name, size / 1e6, size * 4 / 3 / 1e6,
+            )
+        mime = _AUDIO_MIME.get(audio_path.suffix.lower(), "application/octet-stream")
+        encoded = base64.b64encode(audio_path.read_bytes()).decode("ascii")
+        return f"data:{mime};base64,{encoded}"
+
+    @staticmethod
+    def _describe_audio(audio_payload: str) -> str:
+        """日志/诊断里用的短描述（避免把几 MB 的 base64 打进日志）。"""
+        if audio_payload.startswith("data:"):
+            head, _, body = audio_payload.partition(",")
+            return f"{head},<{len(body)} base64 chars>"
+        return audio_payload
+
     def _server_path(self, audio_path: Path) -> str:
         """把本地音频路径换算成服务端可见的路径。
 
@@ -322,15 +372,15 @@ class SglangMusicClient(SongAnalysisClient):
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise SongAnalysisError(f"音频文件不存在: {audio_path}")
-        # 服务端按路径读文件：需换算成服务端可见的路径（见 --sglang-path-map）
-        audio_url = self._server_path(audio_path)
-        self._last_sent_path = audio_url
+        # 服务端按路径/内联数据读音频：路径模式需换算成服务端可见路径
+        audio_url = self._audio_payload(audio_path)
+        self._last_sent_path = self._describe_audio(audio_url)
 
         logger.info(
             "[sglang] %s POST %s (%s, max_new_tokens=%d)",
             audio_path.name,
             self._url_generate if self.api_mode == "generate" else self._url_chat,
-            audio_url,
+            self._last_sent_path,
             self.max_new_tokens,
         )
         if self.api_mode == "generate":

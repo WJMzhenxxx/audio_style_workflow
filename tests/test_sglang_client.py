@@ -509,3 +509,65 @@ def test_identical_responses_trigger_warning(audio_file, caplog):
         client.analyze(audio_file)
 
     assert any("完全相同" in r.message for r in caplog.records)
+
+
+# ----------------------------------------------------------------------
+# base64 内联（不依赖共享文件系统）
+# ----------------------------------------------------------------------
+def test_audio_base64_sends_data_url(audio_file):
+    import base64
+
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Pop\nok"}}]})
+
+    client = SglangMusicClient(
+        api_mode="chat", audio_base64=True, transport=httpx.MockTransport(handler)
+    )
+    client.analyze(audio_file)
+
+    content = calls[0]["messages"][0]["content"]
+    url = next(x for x in content if x["type"] == "audio_url")["audio_url"]["url"]
+    assert url.startswith("data:audio/flac;base64,")
+    assert base64.b64decode(url.split(",", 1)[1], validate=True) == audio_file.read_bytes()
+
+
+def test_audio_path_mode_is_default(audio_file):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Pop\nok"}}]})
+
+    SglangMusicClient(api_mode="chat", transport=httpx.MockTransport(handler)).analyze(audio_file)
+    url = calls[0]["messages"][0]["content"][0]["audio_url"]["url"]
+    assert url == str(audio_file.resolve())
+
+
+def test_audio_base64_generate_mode(audio_file):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"text": "Pop\nok"})
+
+    client = SglangMusicClient(audio_base64=True, transport=httpx.MockTransport(handler))
+    client.analyze(audio_file)
+    assert calls[0]["audio_data"].startswith("data:audio/flac;base64,")
+
+
+def test_describe_audio_hides_payload():
+    client = SglangMusicClient(audio_base64=True)
+    short = client._describe_audio("data:audio/mpeg;base64," + "A" * 5000)
+    assert short.startswith("data:audio/mpeg;base64,<")
+    assert len(short) < 60
+
+
+def test_cli_sglang_audio_base64(tmp_path):
+    from audio_style_workflow.main import build_client
+
+    args = _parse_cli(tmp_path, "--sglang", "http://h:1", "--sglang-audio-base64")
+    assert build_client(args).audio_base64 is True
+    assert build_client(_parse_cli(tmp_path, "--sglang", "http://h:1")).audio_base64 is False

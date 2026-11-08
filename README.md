@@ -148,22 +148,29 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:4
 `http://localhost:30000`；`--sglang-base BASE_URL` 是显式指定地址的等价形式
 （优先级最高）。推理结果统一解析为 `styles` + `description`，下游流程不变。
 
-#### 跨机部署：路径必须在服务端可见
+#### 跨机部署：base64 内联（推荐）或路径映射
 
-`sglang` 是**在服务端按路径读音频**的。如果客户端是 Windows、服务端是 Linux
-（或两台不同机器），直接发本地绝对路径 `C:\...` 服务端根本打不开——模型会拿不到
+`sglang` 默认**在服务端按路径读音频**。如果客户端是 Windows、服务端是 Linux
+（或两台不同机器），直接发本地绝对路径 `C:\...` 服务端打不开——模型拿不到
 音频，返回一段与歌曲无关的通用描述（典型表现：**不同歌曲返回完全相同的文本**）。
 
-两种解法：
-
 ```bash
-# A) 用 --sglang-path-map 把本地前缀映射成服务端可见路径（推荐）
---sglang-path-map "C:\proj\audio_style_workflow\music=/data/music"
-
-# B) 在服务端挂载同一份目录（NFS / SMB / sshfs），让路径本身就一致
+# A) base64 内联：不依赖共享文件系统（推荐）
+--sglang-audio-base64
 ```
 
-客户端会检测"连续多首返回完全相同文本"并打印 warning 提示这一点。
+客户端会把音频编码成 `data:<mime>;base64,<...>` 放进 `audio_url`。
+sglang 的 `load_audio` 原生支持 `data:` URL（注意：**裸 base64 不支持**，
+会被当成本地路径）。代价是请求体增大约 33%，大文件会更慢。
+
+```bash
+# B) 路径映射：服务端确实能看到这份文件时才用
+--sglang-path-map "C:\proj\audio_style_workflow\music=/data/music"
+
+# C) 服务端挂载同一份目录（NFS / SMB / sshfs），路径本身一致
+```
+
+客户端还会检测"连续多首返回完全相同文本"并打印 warning 提示输入可能没送达。
 
 #### `content` 为 null（答案落在 `reasoning_content`）
 
@@ -228,7 +235,8 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--sglang-api {generate,chat}` | sglang API 模式：`generate`=/generate；`chat`=/v1/chat/completions |
 | `--sglang-thinking-budget N` | chat 模式开启 thinking 分离并限制思考 token 数（需同时提供下面的处理器串） |
 | `--sglang-custom-logit-processor` | thinking budget 的 `custom_logit_processor` 序列化串（`to_str()` 输出）；支持 `@文件` 或环境变量 `SGLANG_CUSTOM_LOGIT_PROCESSOR` |
-| `--sglang-path-map LOCAL=REMOTE` | 把本地路径前缀映射为服务端可见路径，可重复（跨机部署必需） |
+| `--sglang-path-map LOCAL=REMOTE` | 把本地路径前缀映射为服务端可见路径，可重复（共享文件系统时用） |
+| `--sglang-audio-base64` | 音频以 `data:` URL（base64）内联发送，无需共享文件系统 |
 | `--model-id` | 本地 MusicFlamingo 模型 HuggingFace ID，默认 `nvidia/music-flamingo-2601-hf` |
 | `--max-new-tokens` | 模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024） |
 | `--concurrency` | 分析端点并发请求数（本地模型自动串行化） |

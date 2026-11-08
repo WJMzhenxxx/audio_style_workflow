@@ -163,9 +163,13 @@ def describe_request(audio_path: Path, client: Any) -> dict[str, Any]:
     prompt = getattr(client, "prompt", None)
     if prompt:
         info["prompt"] = prompt
-    # 若客户端做了路径映射（本地 -> 服务端），记录真正发出去的路径
+    # 若客户端做了路径映射（本地 -> 服务端）或 base64 内联，记录实际发送形态
+    if getattr(client, "audio_base64", False):
+        info["audio_encoding"] = "base64"
+    elif hasattr(client, "_server_path"):
+        info["audio_encoding"] = "path"
     mapper = getattr(client, "_server_path", None)
-    if callable(mapper):
+    if callable(mapper) and not getattr(client, "audio_base64", False):
         try:
             mapped = mapper(audio)
             if mapped and mapped != str(audio.resolve()):
