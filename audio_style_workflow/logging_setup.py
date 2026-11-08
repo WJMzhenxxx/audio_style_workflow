@@ -163,6 +163,15 @@ def describe_request(audio_path: Path, client: Any) -> dict[str, Any]:
     prompt = getattr(client, "prompt", None)
     if prompt:
         info["prompt"] = prompt
+    # 若客户端做了路径映射（本地 -> 服务端），记录真正发出去的路径
+    mapper = getattr(client, "_server_path", None)
+    if callable(mapper):
+        try:
+            mapped = mapper(audio)
+            if mapped and mapped != str(audio.resolve()):
+                info["server_path"] = mapped
+        except Exception:  # pragma: no cover - 映射不应影响分析
+            pass
     return info
 
 

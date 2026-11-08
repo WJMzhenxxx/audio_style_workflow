@@ -4,6 +4,8 @@
 thinking 分离 + budget 控制）两种适配，以及请求体结构与错误处理。
 """
 import json
+import logging
+import os
 
 import httpx
 import pytest
@@ -445,3 +447,65 @@ def test_cli_sglang_conflicts_with_local_and_mock(tmp_path):
         args = _parse_cli(tmp_path, *extra)
         with pytest.raises(ValueError):
             build_client(args)
+
+
+# ----------------------------------------------------------------------
+# 本地 -> 服务端路径映射（跨机部署）
+# ----------------------------------------------------------------------
+def test_server_path_map_translates(tmp_path):
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "album" / "a.flac"
+    audio.parent.mkdir()
+    audio.write_bytes(b"x")
+
+    client = SglangMusicClient(
+        api_mode="chat", audio_path_map=[(str(music), "/data/music")]
+    )
+    assert client._server_path(audio) == "/data/music/album/a.flac"
+    assert client._server_path(music / "b.mp3") == "/data/music/b.mp3"
+
+
+def test_server_path_without_map_is_absolute(tmp_path):
+    audio = tmp_path / "b.mp3"
+    audio.write_bytes(b"x")
+    assert SglangMusicClient()._server_path(audio) == str(audio.resolve())
+
+
+def test_server_path_unmatched_prefix_untouched(tmp_path):
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "x.flac"
+    audio.write_bytes(b"x")
+    client = SglangMusicClient(api_mode="chat", audio_path_map=[(str(tmp_path / "other"), "/nope")])
+    assert client._server_path(audio) == str(audio.resolve())
+
+
+def test_cli_sglang_path_map(tmp_path):
+    from audio_style_workflow.main import build_client
+
+    args = _parse_cli(tmp_path, "--sglang", "http://h:1", "--sglang-api", "chat",
+                      "--sglang-path-map", r"C:\music=/data/music")
+    client = build_client(args)
+    assert client.audio_path_map == [(os.path.normpath(r"C:\music"), "/data/music")]
+
+
+def test_cli_sglang_path_map_invalid(tmp_path):
+    from audio_style_workflow.main import build_client
+
+    args = _parse_cli(tmp_path, "--sglang", "http://h:1", "--sglang-path-map", "no-equals")
+    with pytest.raises(ValueError):
+        build_client(args)
+
+
+def test_identical_responses_trigger_warning(audio_file, caplog):
+    """连续返回相同文本 -> 提示音频可能没被服务端读到。"""
+    same = {"choices": [{"message": {"content": None, "reasoning_content": "固定文本"}}]}
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=same))
+    client = SglangMusicClient(api_mode="chat", transport=transport)
+
+    with caplog.at_level(logging.WARNING, logger="audio_style_workflow.api.sglang_client"):
+        client.analyze(audio_file)
+        client.analyze(audio_file)
+
+    assert any("完全相同" in r.message for r in caplog.records)

@@ -47,11 +47,12 @@ thinking budget 说明：设置 ``thinking_budget`` 时必须同时提供
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
-from pathlib import Path
-from typing import Any, Literal, Optional
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal, Optional, Sequence
 
 import httpx
 
@@ -207,6 +208,7 @@ class SglangMusicClient(SongAnalysisClient):
         model_name: str = "default",
         thinking_budget: Optional[int] = None,
         custom_logit_processor: Optional[str] = None,
+        audio_path_map: Optional[Sequence[tuple[str, str]]] = None,
         timeout: float = 600.0,
         retries: int = 2,
         transport: Optional[Any] = None,
@@ -233,6 +235,18 @@ class SglangMusicClient(SongAnalysisClient):
         #: ``--enable-custom-logit-processor`` 而被拒绝，会自动降级为 False。
         self.thinking_budget_applied = self.thinking_budget is not None
 
+        #: 本地路径前缀 -> 服务端可见路径前缀；服务端读不到本地路径时需要它
+        self.audio_path_map: list[tuple[str, str]] = [
+            (os.path.normpath(str(local)), str(remote).rstrip("/\\") or "/")
+            for local, remote in (audio_path_map or [])
+        ]
+
+        #: 连续返回相同文本的计数（用于诊断"音频没被读到"）
+        self._last_text_digest: Optional[str] = None
+        self._identical_streak = 0
+        self._identical_warned = False
+        self._last_sent_path: Optional[str] = None
+
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -250,6 +264,48 @@ class SglangMusicClient(SongAnalysisClient):
     # ------------------------------------------------------------------
     # 分析
     # ------------------------------------------------------------------
+    def _server_path(self, audio_path: Path) -> str:
+        """把本地音频路径换算成服务端可见的路径。
+
+        服务端与客户端不共享文件系统时（例如客户端 Windows、服务端 Linux），
+        直接用本地绝对路径必然读不到。可用 ``audio_path_map`` 做前缀映射::
+
+            [("D:\\\\music", "/data/music")]  ->  D:\\music\\a.flac  =>  /data/music/a.flac
+        """
+        resolved = str(Path(audio_path).resolve())
+        normalized = os.path.normpath(resolved)
+        for local_root, remote_root in self.audio_path_map:
+            if normalized == local_root:
+                relative = ""
+            elif normalized.startswith(local_root + os.sep):
+                relative = os.path.relpath(normalized, local_root)
+            else:
+                continue
+            remote = PurePosixPath(remote_root)
+            if relative:
+                remote = remote / PurePosixPath(*Path(relative).parts)
+            return str(remote)
+        return resolved
+
+    def _check_identical_streak(self, text: str) -> None:
+        """连续多首返回完全相同的文本，通常意味着服务端根本没读到音频。"""
+        digest = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+        if digest == self._last_text_digest:
+            self._identical_streak += 1
+        else:
+            self._last_text_digest = digest
+            self._identical_streak = 1
+        if self._identical_streak >= 2 and not self._identical_warned:
+            self._identical_warned = True
+            logger.warning(
+                "[sglang] 连续 %d 首歌返回完全相同的文本（%d 字符），疑似服务端没有读到音频。"
+                "请检查音频路径对服务端是否可见（客户端 Windows 路径 vs 服务端 Linux 路径？），"
+                "或用 --sglang-path-map 本地前缀=服务端前缀 做映射。当前发送路径示例: %s",
+                self._identical_streak,
+                len(text),
+                self._last_sent_path or "(未知)",
+            )
+
     def _disable_thinking_budget(self, reason: str) -> None:
         """服务端拒绝该字段时自动降级（只提示一次）。"""
         if not self.thinking_budget_applied:
@@ -265,8 +321,9 @@ class SglangMusicClient(SongAnalysisClient):
         audio_path = Path(audio_path)
         if not audio_path.is_file():
             raise SongAnalysisError(f"音频文件不存在: {audio_path}")
-        # 服务端按路径读文件，必须传服务端可见的绝对路径
-        audio_url = str(audio_path.resolve())
+        # 服务端按路径读文件：需换算成服务端可见的路径（见 --sglang-path-map）
+        audio_url = self._server_path(audio_path)
+        self._last_sent_path = audio_url
 
         logger.info(
             "[sglang] %s POST %s (%s, max_new_tokens=%d)",
@@ -281,6 +338,8 @@ class SglangMusicClient(SongAnalysisClient):
             content_source = "text"
         else:
             text, reasoning, raw_response, content_source = self._analyze_via_chat(audio_url)
+
+        self._check_identical_streak(text)
 
         payload: dict[str, Any] = {
             "status": "ok",
