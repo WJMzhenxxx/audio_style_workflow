@@ -308,38 +308,39 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 
 ### 提高识别准确率（子流派识别不准时）
 
-**先量一下模型到底"听"了多少**，别凭感觉。用 `prompt_tokens` 判断：
+#### 实测：整首音频是被完整摄入的，没有截断
 
-| 送什么 | 整首被摄入 | 有硬上限/只听开头 |
+| 音频 | 时长 | prompt_tokens | 音频 token | 折算 |
+| --- | --- | --- | --- | --- |
+| Aphonia 前 30 秒 | 30.0s | 502 | 397 | 13.2 t/s |
+| 04 - Golden.flac 整首 | 194.6s | 2772 | 2667 | 13.7 t/s |
+| Aphonia.mp3 整首 | 362.7s | 5126 | 5021 | 13.8 t/s |
+
+（文本 prompt 约 105 token，已扣除。）三者严格线性 ≈13.6 token/秒，
+**说明模型完整"听"了整首歌，不存在只取前几十秒的情况**。
+
+因此 `--sglang-clip` **只用于降低请求体积**（60s 约 2.5MB vs 整首 57.7MB），
+不要指望它提升准确率——实测截取 30 秒后同一首歌的标签完全变样
+（`Aphonia` 整首是 Dream Pop/Ambient Pop/Synth Pop，前 30 秒却成了
+ambient/new age/film score）。
+
+#### 那判不准是为什么
+
+模型是**按声音的生产特征**打标签，而不是按地域/文化场景。例如
+`04 - Golden.flac`（K-Pop）整首听完给出的是：
+
+> Electropop, Dance-pop, Synth-pop — BPM 124, G major
+
+从制作听感上说没错，但模型没有"这是 K-Pop 场景"这一层知识。
+应对手段按有效性排序：
+
+| 手段 | 说明 | 成本 |
 | --- | --- | --- |
-| 全文 362s | ~5126 | ~5126 |
-| 前 30s | ~520 | ~5126 |
-| 中间 60s | ~930 | ~5126 |
-
-（实测 `Aphonia.mp3` 362.7s → `prompt_tokens=5126`，减去文本 prompt 约 105 token，
-音频约 5021 token，折合 **≈13.8 token/秒**，呈线性——说明整首大概率都被编码了，
-**不是**只听了开头。）
-
-```bash
-# A) 全文
-python examples/probe_sglang.py "music/Aphonia.mp3" \
-    --base-url http://10.0.0.5:43449 --base64 --api generate
-
-# B) 前 30 秒（数字骤降 = 线性摄入；数字不变 = 有上限）
-python examples/probe_sglang.py "music/Aphonia.mp3" \
-    --base-url http://10.0.0.5:43449 --base64 --api generate --clip 30 --clip-mode start
-```
-
-确认摄入方式后，再选手段：
-
-| 手段 | 适用 | 说明 |
-| --- | --- | --- |
-| `--sglang-clip N` | 降本 / 定向实验 | 只送 N 秒（默认中段）。**整本已摄入时截取会丢信息**，可能更不准 |
-| prompt 要求"最具体子流派优先" | 输出笼统（只给 Pop） | 已内置，并列出 K-Pop / City Pop 等示例 |
-| 别名归一化 | 写法不统一 | `kpop`/`韩流` → `K-Pop`，`citypop` → `City Pop` … |
-| 多采样投票 | 偶发漏判 | `temperature>0` 跑 N 次取多数；当前 `temperature=0.0` 是最保守的贪心解码 |
-| 二段式提问 | 8 个字段摊薄注意力 | 先只问流派/语言，再问其余 |
-| LLM 复核 / 换更大模型 | 文化性子流派（K-Pop、City Pop） | 8B 模型对地域风格本就偏弱 |
+| **场景复核（推荐）** | 二段式：第二轮专门问「这首歌是否属于 K-Pop / J-Pop / Mandopop / City Pop 等场景？逐个回答是/否 + 理由」，比开放生成更容易命中 | 每首 +1 次调用 |
+| 多采样投票 | `temperature>0` 跑 N 次取多数；当前 `temperature=0.0` 是最保守的贪心解码 | N 倍 |
+| prompt 强化 | 已要求"最具体子流派优先 + 示例"，能改善表达，但补不上模型没有的类别 | 0 |
+| 别名归一化 | `kpop`/`韩流` → `K-Pop`，`citypop` → `City Pop` 等 | 0 |
+| 换更大/更懂文化的模型 | 8B 模型对地域性流派本就偏弱 | 换硬件 |
 
 ### 中断后怎么续跑
 

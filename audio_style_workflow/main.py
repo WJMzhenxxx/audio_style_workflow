@@ -60,7 +60,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     client.add_argument("--sglang-path-map", action="append", default=None, metavar="LOCAL=REMOTE",
                         help="把本地路径前缀映射为服务端可见路径，可重复。例：--sglang-path-map \"C:\\music=/data/music\"（服务端读不到客户端路径时必须用）")
     client.add_argument("--sglang-clip", type=int, default=0, metavar="SECONDS",
-                        help="只取这么长的音频送模型（0=整首）。用途：降低请求体积 / 做定向实验；注意会丢弃其余部分")
+                        help="只取这么长的音频送模型（0=整首）。仅用于降低请求体积；实测模型本就会完整摄入整首，截取会丢信息")
     client.add_argument("--sglang-clip-mode", choices=["middle", "start"], default="middle",
                         help="--sglang-clip 的截取位置：middle=中间窗口（默认）；start=从头")
     client.add_argument("--sglang-audio-base64", action="store_true",
