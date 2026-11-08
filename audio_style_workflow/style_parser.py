@@ -50,7 +50,9 @@ DEFAULT_ANALYSIS_PROMPT = (
     "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
     "Line 4: Key: <key signature, e.g. C major / A minor>\n"
     "Line 5: Mood: <one or two mood/atmosphere words, e.g. Warm, Dreamy, Melancholic>\n"
-    "Line 6: Why: <one or two sentences explaining why these styles fit this track>\n"
+    "Line 6: Score: <integer 0-10 rating, 10 being best>\n"
+    "Line 7: Review: <one sentence overall review>\n"
+    "Line 8: Why: <one or two sentences explaining why these styles fit this track>\n"
     "Then leave one blank line and describe in detail the genre, instruments, "
     "production style and the overall mood it creates."
 )
@@ -58,12 +60,14 @@ DEFAULT_ANALYSIS_PROMPT = (
 #: 中文版 prompt：风格名 / Tempo / Key 保持英文，Mood 与 Why 及正文用中文。
 #: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请聆听这段音频并分析。严格按下面 6 行输出，不要加任何多余前缀：\n"
+    "请聆听这段音频并分析。严格按下面 8 行输出，不要加任何多余前缀：\n"
     "<风格标签，用英文书写，逗号分隔，例如 Pop, R&B, Dream Pop, Synth Pop>\n"
     "BPM: <每分钟节拍数，整数，例如 120>\n"
     "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
     "Key: <调性，用英文，例如 C major / A minor>\n"
     "Mood: <用中文写一两个词描述氛围，例如 温暖, 舒缓, 忧郁, 空灵>\n"
+    "Score: <0-10 的整数评分，10 为最佳>\n"
+    "Review: <用中文写一句话总体评价这首歌>\n"
     "Why: <用中文写一两句话，说明为什么判定为这些风格>\n"
     "然后空一行，用中文详细描述曲风、配器、制作与整体情绪；"
     "描述里提到风格名、速度术语、调性时仍保留英文原词。"
@@ -343,6 +347,69 @@ def extract_mood(text: str) -> Optional[str]:
         value = value.strip("[]【】").strip()
         if value and len(value) <= _MAX_META_LEN:
             return value
+    return None
+
+
+# ----------------------------------------------------------------------
+# 评分（Score）与歌曲评价（Review）
+# ----------------------------------------------------------------------
+#: ``Score: 8`` / ``评分：8/10`` / ``rating: 4/5``
+_SCORE_LABEL_RE = re.compile(
+    r"^\s*(?:score|rating|评分|打分|得分)\s*[:：]\s*(\d{1,3})(?:\s*/\s*(\d{1,3}))?",
+    re.IGNORECASE,
+)
+#: ``Review: 一句话评价`` / ``评价：…``
+_REVIEW_LABEL_RE = re.compile(
+    r"^\s*(?:review|comment|overall|评价|简评|点评|乐评|总评)\s*[:：]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+#: 评分统一到 0-10
+_SCORE_MAX = 10
+#: 评价最大长度（写进标签不宜过长）
+_MAX_REVIEW_LEN = 200
+
+
+def extract_score(text: str) -> Optional[int]:
+    """提取评分并归一化到 0-10。
+
+    支持 ``Score: 8``、``评分：8/10``、``rating: 4/5``（按分母换算到 10 分制）。
+    """
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        line = _clean_meta_line(raw_line)
+        if not line:
+            continue
+        match = _SCORE_LABEL_RE.match(line)
+        if not match:
+            continue
+        try:
+            value = int(match.group(1))
+            scale = int(match.group(2)) if match.group(2) else _SCORE_MAX
+        except (TypeError, ValueError):
+            continue
+        if scale <= 0 or value < 0 or value > scale:
+            continue
+        # 按分母换算到 10 分制
+        normalized = round(value * _SCORE_MAX / scale)
+        return max(0, min(_SCORE_MAX, normalized))
+    return None
+
+
+def extract_review(text: str) -> Optional[str]:
+    """提取一句话歌曲评价（``Review:`` / ``评价：``）。"""
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        line = _clean_meta_line(raw_line)
+        if not line:
+            continue
+        match = _REVIEW_LABEL_RE.match(line)
+        if not match:
+            continue
+        value = match.group(1).strip().strip("\"'“”‘’").strip()
+        if value:
+            return value[:_MAX_REVIEW_LEN]
     return None
 
 

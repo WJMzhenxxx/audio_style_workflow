@@ -429,7 +429,7 @@ dry-run 模式不读也不写扫描记录，保持预览无副作用。
 | 格式 | 写入位置 | Windows 资源管理器 |
 | --- | --- | --- |
 | FLAC | VorbisComment `GENRE` / `MOOD` | 属性 → 详细信息可见「流派」 |
-| MP3 | **标准 ID3 帧** `TCON`(流派) / `TMOO`(氛围) / `TBPM` / `TKEY` | 属性 → 详细信息直接显示 |
+| MP3 | **标准 ID3 帧** `TCON`(流派) / `TMOO`(氛围) / `POPM`(评分) / `COMM`(评价) / `TBPM` / `TKEY` | 属性 → 详细信息直接显示 |
 
 > 早期版本写的是自定义帧 `TXXX:GENRE`，Windows 资源管理器**不显示**；
 > 现在默认键 `GENRE` / `MOOD` / `BPM` / `KEY` 会映射到标准帧，自定义键
@@ -442,6 +442,8 @@ dry-run 模式不读也不写扫描记录，保持预览无副作用。
 | --- | --- | --- | --- |
 | 流派（类别） | `GENRE` | 标准帧 `TCON` | `Pop; Dream Pop` |
 | 氛围 | `MOOD` | 标准帧 `TMOO` | `温暖, 舒缓` |
+| 评分 | `RATING`（0-100） | 标准帧 `POPM`（星级） | `80` / 4 星 |
+| 评价 | `COMMENT` | 标准帧 `COMM` | `旋律抓耳，制作干净。` |
 | BPM | `BPM` | 标准帧 `TBPM` | `120` |
 | Tempo | `TEMPO` | `TXXX:TEMPO`（无标准帧） | `Moderato` |
 | Key | `KEY` | 标准帧 `TKEY` | `C major` |

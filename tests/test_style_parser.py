@@ -257,3 +257,24 @@ def test_extract_mood():
     assert extract_mood("情绪: 忧郁") == "忧郁"
     assert extract_mood("BPM: 100\nKey: C major") is None
     assert extract_mood("") is None
+
+
+def test_extract_score_normalizes_to_ten():
+    from audio_style_workflow.style_parser import extract_score
+
+    assert extract_score("Score: 8") == 8
+    assert extract_score("评分：8/10") == 8
+    assert extract_score("rating: 4/5") == 8      # 按分母换算
+    assert extract_score("Score: 0") == 0
+    assert extract_score("Score: 15") is None     # 超出分母
+    assert extract_score("BPM: 100") is None
+    assert extract_score("") is None
+
+
+def test_extract_review():
+    from audio_style_workflow.style_parser import extract_review
+
+    assert extract_review("Review: 旋律抓耳，制作干净。") == "旋律抓耳，制作干净。"
+    assert extract_review("评价：一首很棒的单曲") == "一首很棒的单曲"
+    assert extract_review("comment: solid track") == "solid track"
+    assert extract_review("Mood: 温暖") is None

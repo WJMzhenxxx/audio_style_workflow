@@ -121,6 +121,7 @@ def test_write_and_read_extra_tags_flac(fresh_flac):
     assert written == {"bpm": "118", "tempo": "Moderato", "key": "C major"}
     assert read_extra_tags(fresh_flac) == {
         "bpm": "118", "tempo": "Moderato", "key": "C major", "mood": None,
+        "score": None, "review": None,
     }
 
 
@@ -131,6 +132,7 @@ def test_extra_tags_partial_and_empty(fresh_flac):
     assert write_extra_tags(fresh_flac, bpm=90) == {"bpm": "90"}
     assert read_extra_tags(fresh_flac) == {
         "bpm": "90", "tempo": None, "key": None, "mood": None,
+        "score": None, "review": None,
     }
 
 
@@ -196,3 +198,31 @@ def test_custom_key_still_uses_txxx(tmp_path):
     write_styles(mp3, ["Jazz"], key="MY_STYLE")
     assert ID3(str(mp3)).getall("TXXX:MY_STYLE")[0].text == ["Jazz"]
     assert get_styles(mp3, key="MY_STYLE") == "Jazz"
+
+
+def test_score_and_review_frames(tmp_path):
+    """评分 -> POPM/RATING，评价 -> COMM/COMMENT。"""
+    from mutagen.flac import FLAC
+    from mutagen.id3 import ID3
+
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags
+
+    mp3 = tmp_path / "s.mp3"
+    flac = tmp_path / "s.flac"
+    for out, codec in ((mp3, "libmp3lame"), (flac, "flac")):
+        subprocess.run(
+            [resolve_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+             "-c:a", codec, str(out)],
+            capture_output=True, check=True,
+        )
+        write_extra_tags(out, score=8, review="旋律抓耳，制作干净。")
+
+    popm = ID3(str(mp3)).getall("POPM")[0]
+    assert popm.rating == 196                    # 8/10 约 4 星
+    assert ID3(str(mp3)).getall("COMM")[0].text == ["旋律抓耳，制作干净。"]
+    assert FLAC(str(flac)).get("RATING") == ["80"]
+    assert FLAC(str(flac)).get("COMMENT") == ["旋律抓耳，制作干净。"]
+
+    info = read_extra_tags(mp3)
+    assert info["score"] == "8" and info["review"] == "旋律抓耳，制作干净。"

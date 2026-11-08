@@ -62,6 +62,8 @@ from ..style_parser import (
     extract_genre_rationale,
     extract_mood,
     extract_musical_meta,
+    extract_review,
+    extract_score,
     extract_styles_from_text,
 )
 from .base import SongAnalysisClient, SongAnalysisError
@@ -462,6 +464,12 @@ class SglangMusicClient(SongAnalysisClient):
         mood = extract_mood(text)
         if mood:
             payload["mood"] = mood
+        score = extract_score(text)
+        if score is not None:
+            payload["score"] = score
+        review = extract_review(text)
+        if review:
+            payload["review"] = review
         rationale = extract_genre_rationale(text)
         if rationale:
             payload["genre_rationale"] = rationale

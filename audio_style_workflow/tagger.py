@@ -16,12 +16,14 @@ from mutagen.flac import FLAC
 from mutagen.id3 import (
     ID3,
     ID3NoHeaderError,
+    COMM,
     TALB,
     TBPM,
     TCON,
     TIT2,
     TKEY,
     TMOO,
+    POPM,
     TPE1,
     TPE2,
     TRCK,
@@ -39,8 +41,16 @@ DEFAULT_BPM_KEY = "BPM"
 DEFAULT_TEMPO_KEY = "TEMPO"
 DEFAULT_KEY_KEY = "KEY"
 DEFAULT_MOOD_KEY = "MOOD"
+DEFAULT_RATING_KEY = "RATING"
+DEFAULT_REVIEW_KEY = "COMMENT"
 
 _MAX_KEY_LEN = 60
+#: 评分上限（0-10）
+_SCORE_MAX = 10
+#: POPM 的 email 字段仅作标识，Windows 不显示
+_POPM_EMAIL = "audio_style_workflow"
+#: 星级 -> POPM rating 字节（Windows 识别的固定阈值）
+_POPM_BY_STARS = {1: 1, 2: 64, 3: 128, 4: 196, 5: 255}
 
 #: 键名 -> MP3 标准 ID3 帧（Windows 资源管理器只显示标准帧）
 _MP3_STANDARD_FRAMES: dict[str, type] = {
@@ -166,20 +176,27 @@ def write_extra_tags(
     tempo: Optional[str] = None,
     key: Optional[str] = None,
     mood: Optional[str] = None,
+    score: Optional[int] = None,
+    review: Optional[str] = None,
     tempo_key: str = DEFAULT_TEMPO_KEY,
     mood_key: str = DEFAULT_MOOD_KEY,
+    rating_key: str = DEFAULT_RATING_KEY,
+    review_key: str = DEFAULT_REVIEW_KEY,
 ) -> dict[str, str]:
-    """把 BPM / Tempo / Key / Mood 写入音频标签，返回实际写入的字段。
+    """把 BPM / Tempo / Key / Mood / 评分 / 评价写入标签，返回实际写入的字段。
 
-    - FLAC：VorbisComment ``BPM`` / ``TEMPO`` / ``KEY`` / ``MOOD``
-    - MP3 ：标准帧 ``TBPM`` / ``TKEY`` / ``TMOO``（Windows 可显示），
-      Tempo 无标准帧，落 ``TXXX:TEMPO``
+    - FLAC：VorbisComment ``BPM`` / ``TEMPO`` / ``KEY`` / ``MOOD`` /
+      ``RATING``(0-100) / ``COMMENT``
+    - MP3 ：标准帧 ``TBPM`` / ``TKEY`` / ``TMOO`` / ``POPM``(评分) / ``COMM``(评价)
+      （Windows 资源管理器可显示），Tempo 无标准帧，落 ``TXXX:TEMPO``
 
     所有值都为空时不做任何写入（返回空 dict）；单个值非法只会被跳过。
     """
     path = Path(path)
     tempo_key = _check_key(tempo_key)
     mood_key = _check_key(mood_key)
+    rating_key = _check_key(rating_key)
+    review_key = _check_key(review_key)
     written: dict[str, str] = {}
 
     bpm_value: Optional[str] = None
@@ -193,12 +210,23 @@ def write_extra_tags(
     tempo_value = (tempo or "").strip() or None
     key_value = (key or "").strip() or None
     mood_value = (mood or "").strip() or None
+    review_value = (review or "").strip() or None
+    score_value: Optional[int] = None
+    if score is not None:
+        try:
+            score_int = int(score)
+        except (TypeError, ValueError):
+            score_int = -1
+        if 0 <= score_int <= _SCORE_MAX:
+            score_value = score_int
 
     if (
         bpm_value is None
         and tempo_value is None
         and key_value is None
         and mood_value is None
+        and score_value is None
+        and review_value is None
     ):
         return written
 
@@ -218,6 +246,13 @@ def write_extra_tags(
             if mood_value is not None:
                 audio[mood_key] = [mood_value]
                 written["mood"] = mood_value
+            if score_value is not None:
+                # 0-10 -> 0-100，便于部分播放器按百分比理解
+                audio[rating_key] = [str(score_value * 10)]
+                written["score"] = str(score_value)
+            if review_value is not None:
+                audio[review_key] = [review_value]
+                written["review"] = review_value
             audio.save()
         elif fmt is AudioFormat.MP3:
             try:
@@ -233,6 +268,18 @@ def write_extra_tags(
             if mood_value is not None:
                 tags.setall("TMOO", [TMOO(encoding=3, text=mood_value)])
                 written["mood"] = mood_value
+            if score_value is not None:
+                # POPM：Windows 从这里读「星级」
+                stars = max(1, min(5, round(score_value / 2)))
+                tags.setall("POPM", [POPM(
+                    email=_POPM_EMAIL, rating=_POPM_BY_STARS[stars], count=0,
+                )])
+                written["score"] = str(score_value)
+            if review_value is not None:
+                tags.setall("COMM", [COMM(
+                    encoding=3, lang="eng", desc="", text=review_value,
+                )])
+                written["review"] = review_value
             if tempo_value is not None:
                 tags.setall(
                     f"TXXX:{tempo_key}",
@@ -250,12 +297,18 @@ def write_extra_tags(
 
 
 def read_extra_tags(
-    path: Path, *, tempo_key: str = DEFAULT_TEMPO_KEY, mood_key: str = DEFAULT_MOOD_KEY
+    path: Path,
+    *,
+    tempo_key: str = DEFAULT_TEMPO_KEY,
+    mood_key: str = DEFAULT_MOOD_KEY,
+    rating_key: str = DEFAULT_RATING_KEY,
+    review_key: str = DEFAULT_REVIEW_KEY,
 ) -> dict[str, Optional[str]]:
-    """读取 BPM / Tempo / Key / Mood；缺失或读取失败返回 None（不抛异常）。"""
+    """读取 BPM / Tempo / Key / Mood / 评分 / 评价；缺失返回 None（不抛异常）。"""
     path = Path(path)
     info: dict[str, Optional[str]] = {
         "bpm": None, "tempo": None, "key": None, "mood": None,
+        "score": None, "review": None,
     }
     fmt = AudioFormat.from_path(path)
     try:
@@ -272,6 +325,9 @@ def read_extra_tags(
             info["tempo"] = _flac_first(tempo_key)
             info["key"] = _flac_first(DEFAULT_KEY_KEY)
             info["mood"] = _flac_first(mood_key)
+            rating = _flac_first(rating_key)
+            info["score"] = str(round(int(rating) / 10)) if rating and rating.isdigit() else None
+            info["review"] = _flac_first(review_key)
         elif fmt is AudioFormat.MP3:
             try:
                 tags = ID3(str(path))
@@ -288,6 +344,15 @@ def read_extra_tags(
             info["key"] = _frame_first("TKEY")
             info["mood"] = _frame_first("TMOO")
             info["tempo"] = _frame_first(f"TXXX:{tempo_key}")
+            popm = tags.getall("POPM")
+            if popm:
+                # 反查星级阈值，再换算回 0-10
+                byte = int(popm[0].rating)
+                stars = min(_POPM_BY_STARS, key=lambda s: abs(_POPM_BY_STARS[s] - byte))
+                info["score"] = str(stars * 2)
+            comms = tags.getall("COMM")
+            if comms and getattr(comms[0], "text", None):
+                info["review"] = str(comms[0].text[0])
     except Exception:
         return info
     return info

@@ -35,6 +35,8 @@ from .style_parser import (
     extract_genre_rationale,
     extract_mood,
     extract_musical_meta,
+    extract_review,
+    extract_score,
 )
 from .tagger import TaggerError, get_styles, write_extra_tags, write_styles
 
@@ -307,7 +309,7 @@ def _analysis_meta(analysis: Any) -> dict[str, Any]:
         return {}
     meta = {
         k: analysis.get(k)
-        for k in ("bpm", "tempo", "key", "mood")
+        for k in ("bpm", "tempo", "key", "mood", "score", "review")
         if analysis.get(k) is not None
     }
     if meta:
@@ -319,6 +321,12 @@ def _analysis_meta(analysis: Any) -> dict[str, Any]:
     mood = extract_mood(description)
     if mood:
         parsed["mood"] = mood
+    score = extract_score(description)
+    if score is not None:
+        parsed["score"] = score
+    review = extract_review(description)
+    if review:
+        parsed["review"] = review
     return parsed
 
 
@@ -354,9 +362,12 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
             task.tempo = meta.get("tempo")
             task.key = meta.get("key")
             task.mood = meta.get("mood")
+            task.score = meta.get("score")
+            task.review = meta.get("review")
             logger.info(
-                "[meta] %s -> BPM=%s Tempo=%s Key=%s Mood=%s",
-                task.path.name, task.bpm, task.tempo, task.key, task.mood,
+                "[meta] %s -> BPM=%s Tempo=%s Key=%s Mood=%s Score=%s",
+                task.path.name, task.bpm, task.tempo, task.key,
+                task.mood, task.score,
             )
         if recorder is not None:
             description = _analysis_description(task.analysis)
@@ -381,6 +392,7 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
                         tempo=task.tempo,
                         key=task.key,
                         mood=task.mood,
+                        score=task.score,
                         rationale=rationale,
                     )
                 except Exception as exc:  # 评价落盘失败不影响主流程
@@ -389,7 +401,14 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
 
 
 def _has_musical_meta(task: TrackTask) -> bool:
-    return bool(task.bpm is not None or task.tempo or task.key or task.mood)
+    return bool(
+        task.bpm is not None
+        or task.tempo
+        or task.key
+        or task.mood
+        or task.score is not None
+        or task.review
+    )
 
 
 def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanStateStore] = None) -> PipelineState:
@@ -425,6 +444,8 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
                     tempo=task.tempo,
                     key=task.key,
                     mood=task.mood,
+                    score=task.score,
+                    review=task.review,
                 )
                 logger.info("[tag] %s <= %s", task.path.name, written)
             if store is not None:
