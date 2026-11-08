@@ -54,6 +54,31 @@ DEFAULT_ANALYSIS_PROMPT = (
     "production style and the overall mood it creates."
 )
 
+#: 中文版 prompt：内容全部用中文，字段名保持英文以便确定性解析
+DEFAULT_ANALYSIS_PROMPT_ZH = (
+    "请聆听这段音频并分析，全部用中文作答。严格按下面 5 行输出：\n"
+    "<风格标签，逗号分隔，例如 流行, 节奏布鲁斯, 爵士>\n"
+    "BPM: <每分钟节拍数，整数，例如 120>\n"
+    "Tempo: <速度描述，例如 慢板 / 中板 / 快板>\n"
+    "Key: <调性，例如 C大调 / A小调>\n"
+    "Why: <用一两句话说明为什么判定为这些风格>\n"
+    "然后空一行，用中文详细描述曲风、配器、制作与整体情绪。"
+)
+
+#: 语言 -> prompt 模板
+ANALYSIS_PROMPTS = {
+    "en": DEFAULT_ANALYSIS_PROMPT,
+    "zh": DEFAULT_ANALYSIS_PROMPT_ZH,
+}
+
+
+def get_analysis_prompt(lang: str = "en") -> str:
+    """按语言取分析 prompt（``zh`` / ``en``）。"""
+    key = (lang or "en").strip().lower()
+    if key not in ANALYSIS_PROMPTS:
+        raise ValueError(f"未知的 prompt 语言: {lang!r}（可选: {', '.join(ANALYSIS_PROMPTS)}）")
+    return ANALYSIS_PROMPTS[key]
+
 #: 解析风格标签的启发式参数
 _MAX_LABELS = 8
 _MAX_LABEL_LEN = 48
@@ -72,6 +97,16 @@ _ECHO_HEAD_WORDS = {
     "genres", "genre", "styles", "style", "tags", "tag",
     "风格", "流派", "标签", "输出", "结果", "答案",
 }
+#: "第1行" / "line 2" / "第N条" 这类编号前缀
+_ECHO_HEAD_RE = re.compile(r"^(?:第[一二三四五六七八九十\d]+[行条点]|line\s*\d+|row\s*\d+)$", re.IGNORECASE)
+#: 行首列表编号：``1.`` / ``2、`` / ``-`` / ``•``
+_LIST_MARKER_RE = re.compile(r"^\s*(?:\d+\s*[.)、]|[-•*])\s*")
+#: 标签里出现这些词，基本是回声的说明文字，丢弃
+_INSTRUCTIONY_RE = re.compile(
+    r"(只写|不要|例如|第一行|第[一二三四五六七八九十\d]+行|输出|格式|分隔|前缀|"
+    r"风格标签|comma|separated|short\s+list|line\s*\d+)",
+    re.IGNORECASE,
+)
 
 
 def _strip_instruction_echo(line: str) -> str:
@@ -81,10 +116,13 @@ def _strip_instruction_echo(line: str) -> str:
 
         its musical styles/genres as a short comma-separated list: Pop, R&B
         list: Pop, R&B
+        第1行：流行, 节奏布鲁斯
 
-    冒号前是一整句说明（词数多）或一个指令字段名（list/output/…）时，
-    冒号后才是真正答案。普通单个字段名（``Tempo: 100``）不会被误切。
+    冒号前是一整句说明（词数多）、一个指令字段名（list/output/…）或
+    ``第N行`` 这类编号时，冒号后才是真正答案。普通单个字段名
+    （``Tempo: 100``）不会被误切。
     """
+    line = _LIST_MARKER_RE.sub("", line)
     if ":" not in line and "：" not in line:
         return line
     separator = ":" if ":" in line else "："
@@ -92,9 +130,14 @@ def _strip_instruction_echo(line: str) -> str:
     tail = tail.strip()
     if not tail:
         return line
-    head_words = head.split()
-    if len(head_words) >= 3 or head.strip().lower() in _ECHO_HEAD_WORDS:
-        return tail
+    head_text = head.strip()
+    if (
+        len(head_text.split()) >= 3
+        or head_text.lower() in _ECHO_HEAD_WORDS
+        or _ECHO_HEAD_RE.match(head_text)
+        or _INSTRUCTIONY_RE.search(head_text)
+    ):
+        return _LIST_MARKER_RE.sub("", tail)
     return line
 
 
@@ -117,8 +160,13 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
 
     labels: list[str] = []
     for raw in _SPLIT_RE.split(first_line):
-        label = _TRAILING_PUNCT_RE.sub("", raw.strip().strip('"“”').strip())
-        if not label or len(label) > _MAX_LABEL_LEN or len(label.split()) > _MAX_LABEL_WORDS:
+        label = _TRAILING_PUNCT_RE.sub("", raw.strip().strip('"“”（）()').strip())
+        if not label:
+            continue
+        # 回声的说明文字（"只写风格标签" / "comma-separated" 等）直接丢弃
+        if _INSTRUCTIONY_RE.search(label):
+            continue
+        if len(label) > _MAX_LABEL_LEN or len(label.split()) > _MAX_LABEL_WORDS:
             return []  # 超长/多词片段 -> 整行大概率是描述句，放弃
         if label not in labels:
             labels.append(label)

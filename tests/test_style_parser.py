@@ -199,3 +199,48 @@ def test_styles_strip_instruction_echo():
 
     # 单字段（冒号前只有一两个词）不应被误切
     assert extract_styles_from_text("Pop, R&B, Jazz") == ["Pop", "R&B", "Jazz"]
+
+
+# ----------------------------------------------------------------------
+# 中文 prompt / 中文输出解析
+# ----------------------------------------------------------------------
+def test_analysis_prompt_languages():
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    zh = get_analysis_prompt("zh")
+    en = get_analysis_prompt("en")
+    assert "中文" in zh and "中文" not in en
+    assert zh != en
+    with pytest.raises(ValueError):
+        get_analysis_prompt("fr")
+
+
+def test_chinese_output_parsed():
+    from audio_style_workflow.style_parser import (
+        extract_genre_rationale,
+        extract_musical_meta,
+        extract_styles_from_text,
+    )
+
+    text = (
+        "第1行：流行, 节奏布鲁斯, 爵士\n"
+        "BPM: 100\n"
+        "Tempo: 中板\n"
+        "Key: C大调\n"
+        "Why: 温暖的和声进行与中板律动体现了节奏布鲁斯的特征。\n"
+        "\n"
+        "整首曲子以钢琴为主导，情绪舒缓。"
+    )
+    assert extract_styles_from_text(text) == ["流行", "节奏布鲁斯", "爵士"]
+    assert extract_musical_meta(text) == {
+        "bpm": 100, "tempo": "中板", "key": "C大调",
+    }
+    assert extract_genre_rationale(text).startswith("温暖的和声")
+
+
+def test_instruction_echo_does_not_leak_into_labels():
+    from audio_style_workflow.style_parser import extract_styles_from_text
+
+    echo = "第1行只写风格标签，用逗号分隔，不要加前缀：氛围音乐, 后摇"
+    assert extract_styles_from_text(echo) == ["氛围音乐", "后摇"]
+    assert extract_styles_from_text("1. 流行, 摇滚") == ["流行", "摇滚"]

@@ -24,7 +24,7 @@ from .api.sglang_client import DEFAULT_SGLANG_BASE
 from .logging_setup import DEFAULT_LOG_DIR, setup_logging
 from .models import PipelineState, TrackTask
 from .splitter import SplitError, TtaSplitter
-from .style_parser import StyleParser
+from .style_parser import StyleParser, get_analysis_prompt
 from .tagger import DEFAULT_CUSTOM_KEY, DEFAULT_JOINER
 from .workflow import RunReport, WorkflowConfig, run_workflow
 
@@ -61,6 +61,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="把本地路径前缀映射为服务端可见路径，可重复。例：--sglang-path-map \"C:\\music=/data/music\"（服务端读不到客户端路径时必须用）")
     client.add_argument("--sglang-audio-base64", action="store_true",
                         help="把音频以 data URL（base64）内联进请求，无需共享文件系统（体积增大约 33%%）")
+    client.add_argument("--prompt-lang", choices=["zh", "en"], default="zh",
+                        help="分析 prompt 的语言，从而决定模型用什么语言输出（默认 zh）")
     client.add_argument("--model-id", default=os.environ.get("SONG_ANALYZER_MODEL_ID", "nvidia/music-flamingo-2601-hf"), help="本地 MusicFlamingo 模型 ID（配合 --local）")
     client.add_argument("--max-new-tokens", type=int, default=500, help="模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024）")
     client.add_argument("--concurrency", type=int, default=1, help="分析端点并发请求数（本地模型会自动串行化）")
@@ -119,11 +121,13 @@ def build_client(args: argparse.Namespace):
     modes = [bool(args.local), bool(args.mock), sglang_endpoint is not None]
     if sum(modes) > 1:
         raise ValueError("--local / --mock / --sglang 互斥，请只选一种分析端点")
+    prompt = get_analysis_prompt(getattr(args, "prompt_lang", "en"))
     if sglang_endpoint is not None:
         return create_client(
             "sglang",
             endpoint=sglang_endpoint,
             api_mode="generate",          # 固定走 /generate（chat 端点会丢音频）
+            prompt=prompt,
             thinking_budget=args.sglang_thinking_budget,
             max_new_tokens=args.max_new_tokens,
             custom_logit_processor=args.sglang_custom_logit_processor,
@@ -134,6 +138,7 @@ def build_client(args: argparse.Namespace):
         logger.info("已选择本地模型分析（忽略 --endpoint）")
         return create_client(
             "local",
+            prompt=prompt,
             model_id=args.model_id,
             max_new_tokens=args.max_new_tokens,
         )

@@ -655,3 +655,13 @@ def test_chat_with_audio_keeps_chat(audio_file):
     payload = client.analyze(audio_file)
     assert payload["api_mode"] == "chat"
     assert calls == ["/v1/chat/completions"]
+
+
+def test_cli_prompt_lang(tmp_path):
+    from audio_style_workflow.main import build_client
+
+    zh_client = build_client(_parse_cli(tmp_path, "--sglang", "http://h:1"))
+    assert "中文" in zh_client.prompt          # 默认 zh
+
+    en_client = build_client(_parse_cli(tmp_path, "--sglang", "http://h:1", "--prompt-lang", "en"))
+    assert "Listen to this track" in en_client.prompt
