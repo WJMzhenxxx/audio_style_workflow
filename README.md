@@ -92,21 +92,20 @@ python -m audio_style_workflow.main .\music --mock --mock-freeform --llm-model g
 ```bash
 # 服务端：sglang serve --model-path /path/to/moss-music-model --trust-remote-code
 
-# 模式1：/generate 基础模式（默认）
-python -m audio_style_workflow.main "D:\我的音乐" --sglang --skip-scanned
-
-# 模式2：/v1/chat/completions（OpenAI 兼容）+ thinking 分离
-python -m audio_style_workflow.main "D:\我的音乐" --sglang http://localhost:30000 \
-    --sglang-api chat --max-new-tokens 1024
+# 基础用法（固定走 /generate，音频以 base64 内联，无需共享文件系统）
+python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --skip-scanned
 
 # 或用独立参数 --sglang-base 指定地址（等价写法）
-python -m audio_style_workflow.main "D:\我的音乐" --sglang-base http://192.168.1.10:30000 \
-    --sglang-api chat
+python -m audio_style_workflow.main "D:\我的音乐" --sglang-base http://192.168.1.10:30000
 
 # 或用环境变量 SGLANG_BASE（优先级：--sglang-base > --sglang BASE_URL > SGLANG_BASE > 默认）
 set SGLANG_BASE=http://192.168.1.10:30000
-python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-api chat
+python -m audio_style_workflow.main "D:\我的音乐" --sglang
 ```
+
+> **固定使用 `/generate`**：`/v1/chat/completions` 在部分 sglang 版本里不会把
+> 音频送进模型（响应的 `prompt_tokens` 只有纯文本规模），因此 CLI 不再提供
+> `--sglang-api`，一律走 `/generate`（`audio_data` 字段）。
 
 #### thinking budget（需要服务端 `--enable-custom-logit-processor`）
 
@@ -124,12 +123,11 @@ Qwen3InstructionInjectionThinkingBudgetLogitProcessor as P; print(P.to_str())" >
 
 # 2) 传给工作流（二选一）
 python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:43449 \
-    --sglang-api chat --sglang-thinking-budget 50 \
-    --sglang-custom-logit-processor @processor.json
+    --sglang-thinking-budget 50 --sglang-custom-logit-processor @processor.json
 
 set SGLANG_CUSTOM_LOGIT_PROCESSOR=<上面输出的一整行 JSON>
 python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:43449 \
-    --sglang-api chat --sglang-thinking-budget 50
+    --sglang-thinking-budget 50
 ```
 
 工作流会在**发送前**校验该字段是合法 JSON，不合法立即报错退出（不会波及服务端）；
@@ -194,13 +192,9 @@ python examples/probe_sglang.py "music/Aphonia.mp3" \
 于是不同歌曲得到几乎相同的答案。同一服务端的 `/generate`（`audio_data`）
 则正常：`prompt_tokens` 跳到 5000+，输出随歌曲变化。
 
-客户端已内置自适应：用 `--sglang-api chat` 时若检测到 `prompt_tokens`
-仍是纯文本规模，会**自动改用 `/generate` 并记住**，后续歌曲不再重试 chat。
-
-```bash
-# 也可以直接指定，省掉一次探测
---sglang-api generate
-```
+因此 **CLI 已固定为 `/generate`**，不再提供 `--sglang-api` 开关。
+（库层面 `SglangMusicClient(api_mode="chat")` 仍保留，且会检测到音频缺失后
+自动回落到 `/generate`，但命令行不会走这条路。）
 
 #### `content` 为 null（答案落在 `reasoning_content`）
 
@@ -262,8 +256,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--local` | 使用本地 MusicFlamingo 模型离线推理（需 `pip install -r requirements-local.txt`） |
 | `--sglang [BASE_URL]` | 使用 sglang 部署的音乐理解模型（默认读 `SGLANG_BASE` 再回退 `http://localhost:30000`；音频传本机路径，需共享文件系统） |
 | `--sglang-base BASE_URL` | 显式指定 sglang 服务基地址（等价 `--sglang BASE_URL`，优先级最高） |
-| `--sglang-api {generate,chat}` | sglang API 模式：`generate`=/generate；`chat`=/v1/chat/completions |
-| `--sglang-thinking-budget N` | chat 模式开启 thinking 分离并限制思考 token 数（需同时提供下面的处理器串） |
+| `--sglang-thinking-budget N` | 限制思考 token 数（需同时提供下面的处理器串） |
 | `--sglang-custom-logit-processor` | thinking budget 的 `custom_logit_processor` 序列化串（`to_str()` 输出）；支持 `@文件` 或环境变量 `SGLANG_CUSTOM_LOGIT_PROCESSOR` |
 | `--sglang-path-map LOCAL=REMOTE` | 把本地路径前缀映射为服务端可见路径，可重复（共享文件系统时用） |
 | `--sglang-audio-base64` | 音频以 `data:` URL（base64）内联发送，无需共享文件系统 |

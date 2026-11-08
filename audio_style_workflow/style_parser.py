@@ -66,22 +66,34 @@ _SPLIT_RE = re.compile(r"[,，;；、/|\t]|\s{2,}")
 _TRAILING_PUNCT_RE = re.compile(r"[.。!！?？\"'\”’]+\s*$")
 
 
+#: 指令回声里常见的"字段名"（单/双词，也要当成前缀剥掉）
+_ECHO_HEAD_WORDS = {
+    "list", "output", "answer", "result", "format", "response",
+    "genres", "genre", "styles", "style", "tags", "tag",
+    "风格", "流派", "标签", "输出", "结果", "答案",
+}
+
+
 def _strip_instruction_echo(line: str) -> str:
     """去掉模型回声的指令前缀。
 
     生成式模型常把 prompt 里的说明原样接续，例如::
 
         its musical styles/genres as a short comma-separated list: Pop, R&B
+        list: Pop, R&B
 
-    此时冒号前是一整句说明（词数多），冒号后才是真正答案。单个字段名
-    （``Tempo: 100``）只有一个词，不会被误切。
+    冒号前是一整句说明（词数多）或一个指令字段名（list/output/…）时，
+    冒号后才是真正答案。普通单个字段名（``Tempo: 100``）不会被误切。
     """
     if ":" not in line and "：" not in line:
         return line
     separator = ":" if ":" in line else "："
     head, _, tail = line.rpartition(separator)
     tail = tail.strip()
-    if tail and len(head.split()) >= 3:
+    if not tail:
+        return line
+    head_words = head.split()
+    if len(head_words) >= 3 or head.strip().lower() in _ECHO_HEAD_WORDS:
         return tail
     return line
 

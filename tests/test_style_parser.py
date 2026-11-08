@@ -194,6 +194,8 @@ def test_styles_strip_instruction_echo():
 
     text = "its musical styles/genres as a short comma-separated list: Dream Pop, Ambient Pop, Synth Pop\nBPM: 100"
     assert extract_styles_from_text(text) == ["Dream Pop", "Ambient Pop", "Synth Pop"]
+    # 短指令字段名也要剥掉
+    assert extract_styles_from_text("list: Dream Pop, Synth Pop") == ["Dream Pop", "Synth Pop"]
 
     # 单字段（冒号前只有一两个词）不应被误切
     assert extract_styles_from_text("Pop, R&B, Jazz") == ["Pop", "R&B", "Jazz"]

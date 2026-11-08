@@ -467,15 +467,31 @@ class SglangMusicClient(SongAnalysisClient):
     # generate 模式（基础音乐描述）
     # ------------------------------------------------------------------
     def _analyze_via_generate(self, audio_url: str) -> tuple[str, dict[str, Any]]:
-        body = {
+        sampling: dict[str, Any] = {
+            "max_new_tokens": self.max_new_tokens,
+            "temperature": self.temperature,
+        }
+        body: dict[str, Any] = {
             "text": self.prompt,
             "audio_data": audio_url,
-            "sampling_params": {
-                "max_new_tokens": self.max_new_tokens,
-                "temperature": self.temperature,
-            },
+            "sampling_params": sampling,
         }
-        raw = self._post(self._url_generate, body, field_hint="text")
+        if self.thinking_budget_applied:
+            # MOSS 的 /generate 也支持 budget：custom_params 放 sampling_params，
+            # processor 放请求顶层（见 MOSS-Music 用法说明）
+            sampling["custom_params"] = {"thinking_budget": self.thinking_budget}
+            body["custom_logit_processor"] = self.custom_logit_processor
+
+        try:
+            raw = self._post(self._url_generate, body, field_hint="text")
+        except SongAnalysisError as exc:
+            if not (self.thinking_budget_applied and _looks_like_unsupported_processor(str(exc))):
+                raise
+            self._disable_thinking_budget(str(exc))
+            sampling.pop("custom_params", None)
+            body.pop("custom_logit_processor", None)
+            raw = self._post(self._url_generate, body, field_hint="text")
+
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise SongAnalysisError(f"sglang /generate 响应缺少 text 字段: {_preview(raw)}")

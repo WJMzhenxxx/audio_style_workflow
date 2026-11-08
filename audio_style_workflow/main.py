@@ -55,8 +55,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     client.add_argument("--local", action="store_true", help="使用本地 MusicFlamingo 模型分析（离线推理，需 pip install -r requirements-local.txt）")
     client.add_argument("--sglang", nargs="?", const=os.environ.get("SGLANG_BASE", DEFAULT_SGLANG_BASE), metavar="BASE_URL", help="使用 sglang 部署的音乐理解模型（音频传本地路径，需与服务共享文件系统；不带值时读环境变量 SGLANG_BASE，再回退 http://localhost:30000）")
     client.add_argument("--sglang-base", default=None, metavar="BASE_URL", help="显式指定 sglang 服务基地址（等价于 --sglang BASE_URL；也可用环境变量 SGLANG_BASE）")
-    client.add_argument("--sglang-api", choices=["generate", "chat"], default="generate", help="sglang API 模式：generate=/generate 基础模式；chat=/v1/chat/completions（OpenAI 兼容）")
-    client.add_argument("--sglang-thinking-budget", type=int, default=None, metavar="N", help="chat 模式下开启 thinking 分离并限制思考 token 数（如 50）")
+    client.add_argument("--sglang-thinking-budget", type=int, default=None, metavar="N", help="限制思考 token 数（如 50）；需同时提供 --sglang-custom-logit-processor")
     client.add_argument("--sglang-custom-logit-processor", default=os.environ.get("SGLANG_CUSTOM_LOGIT_PROCESSOR"), metavar="JSON_OR_@FILE", help="thinking budget 所需的 custom_logit_processor 序列化串（Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str() 的输出）；也可写 @文件路径，或设环境变量 SGLANG_CUSTOM_LOGIT_PROCESSOR")
     client.add_argument("--sglang-path-map", action="append", default=None, metavar="LOCAL=REMOTE",
                         help="把本地路径前缀映射为服务端可见路径，可重复。例：--sglang-path-map \"C:\\music=/data/music\"（服务端读不到客户端路径时必须用）")
@@ -124,7 +123,7 @@ def build_client(args: argparse.Namespace):
         return create_client(
             "sglang",
             endpoint=sglang_endpoint,
-            api_mode=args.sglang_api,
+            api_mode="generate",          # 固定走 /generate（chat 端点会丢音频）
             thinking_budget=args.sglang_thinking_budget,
             max_new_tokens=args.max_new_tokens,
             custom_logit_processor=args.sglang_custom_logit_processor,

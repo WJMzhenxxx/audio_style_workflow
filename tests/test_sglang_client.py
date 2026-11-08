@@ -408,11 +408,11 @@ def test_cli_sglang_base_option(tmp_path, monkeypatch):
 
     monkeypatch.delenv("SGLANG_BASE", raising=False)
     args = _parse_cli(tmp_path, "--sglang-base", "http://explicit-host:30000",
-                      "--sglang-api", "chat", "--sglang-thinking-budget", "50",
+                      "--sglang-thinking-budget", "50",
                       "--sglang-custom-logit-processor", VALID_PROCESSOR)
     client = build_client(args)
     assert client.endpoint == "http://explicit-host:30000"
-    assert client.api_mode == "chat"
+    assert client.api_mode == "generate"      # CLI 固定 generate
     assert client.thinking_budget == 50
 
 
@@ -427,12 +427,12 @@ def test_cli_sglang_base_overrides_env(tmp_path, monkeypatch):
 def test_cli_sglang_custom(tmp_path):
     from audio_style_workflow.main import build_client
 
-    args = _parse_cli(tmp_path, "--sglang", "http://gpu-box:30000", "--sglang-api", "chat",
+    args = _parse_cli(tmp_path, "--sglang", "http://gpu-box:30000",
                       "--sglang-thinking-budget", "50", "--max-new-tokens", "1024",
                       "--sglang-custom-logit-processor", VALID_PROCESSOR)
     client = build_client(args)
     assert client.endpoint == "http://gpu-box:30000"
-    assert client.api_mode == "chat"
+    assert client.api_mode == "generate"
     assert client.thinking_budget == 50
     assert client.max_new_tokens == 1024
     assert client.custom_logit_processor == VALID_PROCESSOR
@@ -484,7 +484,7 @@ def test_server_path_unmatched_prefix_untouched(tmp_path):
 def test_cli_sglang_path_map(tmp_path):
     from audio_style_workflow.main import build_client
 
-    args = _parse_cli(tmp_path, "--sglang", "http://h:1", "--sglang-api", "chat",
+    args = _parse_cli(tmp_path, "--sglang", "http://h:1",
                       "--sglang-path-map", r"C:\music=/data/music")
     client = build_client(args)
     assert client.audio_path_map == [(os.path.normpath(r"C:\music"), "/data/music")]
