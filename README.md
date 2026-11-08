@@ -34,6 +34,7 @@ audio_style_workflow/
 │   └── mock_client.py       # 进程内演示实现（无需网络）
 ├── style_parser.py    # 风格解析（确定 JSON 提取 + LLM 兜底）
 ├── tagger.py          # 自定义标签读写（mutagen）
+├── logging_setup.py   # 日志（log/latest.log）+ 逐曲分析明细（log/details/）
 ├── workflow.py        # LangChain(LCEL) 工作流组装
 └── main.py            # CLI 入口
 examples/mock_server.py # FastAPI Mock 分析端点（本地联调）
@@ -150,16 +151,65 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--resplit` | 强制重新切分（默认复用已有分轨） |
 | `--mock` | 使用进程内 Mock 端点（联调用，无网络） |
 | `--local` | 使用本地 MusicFlamingo 模型离线推理（需 `pip install -r requirements-local.txt`） |
-| `--sglang [BASE_URL]` | 使用 sglang 部署的音乐理解模型（默认 `http://localhost:30000`；音频传本机路径，需共享文件系统） |
+| `--sglang [BASE_URL]` | 使用 sglang 部署的音乐理解模型（默认读 `SGLANG_BASE` 再回退 `http://localhost:30000`；音频传本机路径，需共享文件系统） |
+| `--sglang-base BASE_URL` | 显式指定 sglang 服务基地址（等价 `--sglang BASE_URL`，优先级最高） |
 | `--sglang-api {generate,chat}` | sglang API 模式：`generate`=/generate；`chat`=/v1/chat/completions |
 | `--sglang-thinking-budget N` | chat 模式开启 thinking 分离并限制思考 token 数 |
 | `--model-id` | 本地 MusicFlamingo 模型 HuggingFace ID，默认 `nvidia/music-flamingo-2601-hf` |
 | `--max-new-tokens` | 模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024） |
 | `--concurrency` | 分析端点并发请求数（本地模型自动串行化） |
 | `--llm-model` | 启用 LLM 兜底解析非结构化响应（需 `langchain-openai` + `OPENAI_API_KEY`） |
+| `--log-dir DIR` | 日志目录，默认 `log`（或环境变量 `SONG_ANALYZER_LOG_DIR`） |
 
 环境变量：`SONG_ANALYZER_ENDPOINT`、`SONG_ANALYZER_API_KEY`、
-`SONG_ANALYZER_FILE_FIELD`、`SONG_ANALYZER_LLM_MODEL`、`FFMPEG_PATH`。
+`SONG_ANALYZER_FILE_FIELD`、`SONG_ANALYZER_LLM_MODEL`、`FFMPEG_PATH`、
+`SGLANG_BASE`、`SONG_ANALYZER_LOG_DIR`。
+
+## 日志与逐曲分析明细
+
+每次运行都会在 `--log-dir`（默认 `log/`）下产出：
+
+```
+log/
+├── latest.log          # 本次运行的全量日志（每次运行覆盖，UTF-8）
+└── details/
+    ├── 某首歌__<hash>.json
+    └── ...
+```
+
+- `latest.log`：完整的运行日志（含扫描、切分、分析、解析、写标签各阶段）；
+- `details/*.json`：每首歌一次分析的**原始输入输出**，内容形如
+
+```json
+{
+  "audio": "D:\\music\\song.flac",
+  "recorded_at": "2026-11-09T00:20:00+08:00",
+  "request": {
+    "audio": "D:\\music\\song.flac",
+    "audio_size": 10485760,
+    "client": "sglang-music",
+    "endpoint": "http://localhost:30000",
+    "api_mode": "chat",
+    "thinking_budget": 50,
+    "max_new_tokens": 1024,
+    "prompt": "Listen to this track and analyze it..."
+  },
+  "response": {
+    "status": "ok",
+    "styles": ["Pop", "R&B"],
+    "description": "...",
+    "raw_response": {"choices": [{"message": {"content": "...", "reasoning_content": "..."}}]}
+  },
+  "error": null,
+  "elapsed_sec": 3.21
+}
+```
+
+- 文件名由「歌名 + 绝对路径哈希」决定：同一首歌多次分析覆盖同一文件，并发安全；
+- 分析失败也会落一份明细（`error` 字段记录原因）；
+- 库/Notebook 里通过 `WorkflowConfig(log_dir=Path("log"))` 启用（默认不产生文件）；
+  `main.py` 默认写入 `log/`，可用 `--log-dir` 改路径；
+- 目录内容已加入 `.gitignore`（`log/`）。
 
 ## 分析端点契约
 

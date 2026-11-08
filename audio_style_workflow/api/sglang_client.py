@@ -138,9 +138,10 @@ class SglangMusicClient(SongAnalysisClient):
             self.max_new_tokens,
         )
         if self.api_mode == "generate":
-            text = self._analyze_via_generate(audio_url)
+            text, raw_response = self._analyze_via_generate(audio_url)
+            reasoning = None
         else:
-            text = self._analyze_via_chat(audio_url)
+            text, reasoning, raw_response = self._analyze_via_chat(audio_url)
 
         payload: dict[str, Any] = {
             "status": "ok",
@@ -148,7 +149,11 @@ class SglangMusicClient(SongAnalysisClient):
             "endpoint": self.endpoint,
             "api_mode": self.api_mode,
             "description": text.strip(),
+            # 保留服务端原始响应（原始输出），供分析明细与排查使用
+            "raw_response": raw_response,
         }
+        if reasoning:
+            payload["reasoning"] = reasoning
         styles = extract_styles_from_text(text)
         if styles:
             payload["styles"] = styles
@@ -162,7 +167,7 @@ class SglangMusicClient(SongAnalysisClient):
     # ------------------------------------------------------------------
     # generate 模式（基础音乐描述）
     # ------------------------------------------------------------------
-    def _analyze_via_generate(self, audio_url: str) -> str:
+    def _analyze_via_generate(self, audio_url: str) -> tuple[str, dict[str, Any]]:
         body = {
             "text": self.prompt,
             "audio_data": audio_url,
@@ -175,12 +180,12 @@ class SglangMusicClient(SongAnalysisClient):
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise SongAnalysisError(f"sglang /generate 响应缺少 text 字段: {_preview(raw)}")
-        return text
+        return text, raw
 
     # ------------------------------------------------------------------
     # chat 模式（OpenAI 兼容 + thinking 分离 + budget 控制）
     # ------------------------------------------------------------------
-    def _analyze_via_chat(self, audio_url: str) -> str:
+    def _analyze_via_chat(self, audio_url: str) -> tuple[str, Optional[str], dict[str, Any]]:
         body: dict[str, Any] = {
             "model": self.model_name,
             "messages": [
@@ -210,8 +215,9 @@ class SglangMusicClient(SongAnalysisClient):
             raise SongAnalysisError(f"响应缺少 content 字段: {_preview(raw)}")
         reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
         if isinstance(reasoning, str) and reasoning.strip():
-            logger.debug("[sglang] thinking 分离输出(%d 字符)已忽略", len(reasoning))
-        return content
+            logger.debug("[sglang] thinking 分离输出(%d 字符)已保留在 raw_response/reasoning", len(reasoning))
+            return content, reasoning, raw
+        return content, None, raw
 
     # ------------------------------------------------------------------
     # 传输

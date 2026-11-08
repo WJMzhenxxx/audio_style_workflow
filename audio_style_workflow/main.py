@@ -21,6 +21,7 @@ if hasattr(sys.stdout, "reconfigure"):  # Windows 控制台默认 GBK，避免�
 
 from .api.base import SongAnalysisClient, SongAnalysisError, create_client
 from .api.sglang_client import DEFAULT_SGLANG_BASE
+from .logging_setup import DEFAULT_LOG_DIR, setup_logging
 from .models import PipelineState, TrackTask
 from .splitter import SplitError, TtaSplitter
 from .style_parser import StyleParser
@@ -79,7 +80,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     llm = parser.add_argument_group("LLM 兜底解析")
     llm.add_argument("--llm-model", default=os.environ.get("SONG_ANALYZER_LLM_MODEL"), help="启用 LLM 解析非结构化响应（如 gpt-4o-mini，需 OPENAI_API_KEY）")
 
-    misc = parser.add_argument_group("杂项")
+    misc = parser.add_argument_group("日志")
+    misc.add_argument(
+        "--log-dir", type=Path,
+        default=Path(os.environ.get("SONG_ANALYZER_LOG_DIR", str(DEFAULT_LOG_DIR))),
+        metavar="DIR",
+        help="日志目录：<DIR>/latest.log 记录全量日志，<DIR>/details/ 存放逐曲分析明细"
+             "（也可用环境变量 SONG_ANALYZER_LOG_DIR）",
+    )
     misc.add_argument("-v", "--verbose", action="store_true", help="输出调试日志")
     return parser
 
@@ -136,11 +144,7 @@ def build_style_parser(args: argparse.Namespace) -> StyleParser:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    log_paths = setup_logging(args.log_dir, verbose=args.verbose)
 
     if not args.root.is_dir():
         print(f"[错误] 目录不存在或不是目录: {args.root}", file=sys.stderr)
@@ -171,12 +175,14 @@ def main(argv: Optional[list[str]] = None) -> int:
         dry_run=args.dry_run,
         concurrency=max(1, args.concurrency),
         reuse_split_tracks=not args.resplit,
+        log_dir=log_paths.root,
     )
 
     print(f"目标目录 : {config.root}")
     print(f"分析端点 : {client.name}（{getattr(client, 'endpoint', 'in-process mock')}）")
     print(f"自定义标签: TXXX:{config.custom_tag_key} / {config.custom_tag_key}"
           + ("（dry-run，不写入）" if config.dry_run else ""))
+    print(f"日志      : {log_paths.latest}（明细目录 {log_paths.details}）")
     if config.skip_scanned:
         state_desc = "启用" + ("（重置记录）" if config.reset_state else "") \
             + ("；dry-run 下不读取/不写入记录" if config.dry_run else "")

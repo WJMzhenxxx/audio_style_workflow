@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,7 @@ from langchain_core.runnables import RunnableLambda, RunnableSequence
 
 from .api.base import SongAnalysisClient, SongAnalysisError
 from .cue import CueParseError
+from .logging_setup import AnalysisDetailRecorder, describe_request
 from .models import PipelineState, TrackTask, TtaAlbum
 from .scanner import scan_directory
 from .splitter import SplitError, TtaSplitter
@@ -51,6 +53,9 @@ class WorkflowConfig:
     dry_run: bool = False                     # 只分析解析，不写标签
     concurrency: int = 1                      # 分析端点并发数
     reuse_split_tracks: bool = True           # 分轨文件已存在时复用（断点续跑）
+    #: 日志/明细目录；非 None 时为每首歌写 ``<log_dir>/details/*.json``
+    #: （库里默认不产生文件，CLI 会默认传 ``log/``）
+    log_dir: Optional[Path] = None
 
 
 @dataclass
@@ -204,13 +209,32 @@ def step_split(
     return state_out
 
 
-def _analyze_one(task: TrackTask, client: SongAnalysisClient) -> None:
+def _analyze_one(
+    task: TrackTask,
+    client: SongAnalysisClient,
+    recorder: Optional[AnalysisDetailRecorder] = None,
+) -> None:
+    started = time.perf_counter()
     try:
         task.analysis = client.analyze(task.path)
     except SongAnalysisError as exc:
         task.error = str(exc)
     except Exception as exc:  # 客户端实现的自定义异常兜底
         task.error = f"分析异常（{type(exc).__name__}）: {exc}"
+    elapsed = time.perf_counter() - started
+
+    if recorder is not None:
+        try:
+            recorder.record(
+                task.path,
+                request=describe_request(task.path, client),
+                response=task.analysis,
+                error=task.error,
+                elapsed=elapsed,
+                extra={"styles": list(task.styles)} if task.styles else None,
+            )
+        except Exception as exc:  # 明细失败绝不影响主流程
+            logger.warning("写入分析明细失败（%s）: %s", task.path.name, exc)
 
 
 def step_analyze(
@@ -219,7 +243,11 @@ def step_analyze(
     client: SongAnalysisClient,
     store: Optional[ScanStateStore] = None,
 ) -> PipelineState:
-    """并发调用分析端点，逐任务填充 analysis / error。"""
+    """并发调用分析端点，逐任务填充 analysis / error。
+
+    若 ``config.log_dir`` 已设置，则为每首歌写一份分析明细到
+    ``<log_dir>/details/*.json``（原始输入 + 原始输出）。
+    """
     if store is not None:
         for task in state.tasks:
             if not task.skip_reason and store.is_scanned(task.path):
@@ -231,15 +259,19 @@ def step_analyze(
         logger.info("没有需要分析的歌曲（全部跳过）")
         return state
 
+    recorder = AnalysisDetailRecorder(config.log_dir) if config.log_dir is not None else None
+    if recorder is not None:
+        logger.info("分析明细目录: %s", recorder.details_dir)
+
     logger.info("提交 %d 首歌曲到分析端点（并发 %d, 端点: %s）", len(pending), workers, client.name)
     if workers == 1:
         for i, task in enumerate(pending, 1):
-            _analyze_one(task, client)
+            _analyze_one(task, client, recorder)
             logger.info("[%d/%d] %s %s", i, len(pending), task.path.name,
                         "OK" if task.analysis is not None else f"失败: {task.error}")
     else:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="analyze") as pool:
-            futures = {pool.submit(_analyze_one, task, client): task for task in pending}
+            futures = {pool.submit(_analyze_one, task, client, recorder): task for task in pending}
             done = 0
             for future in as_completed(futures):
                 task = futures[future]

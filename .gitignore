@@ -23,3 +23,4 @@ Thumbs.db
 
 # Workflow runtime artifacts
 .audio_style_scan.json
+log/
