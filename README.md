@@ -226,9 +226,12 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 
 ```
 log/
-├── latest.log          # 本次运行的全量日志（每次运行覆盖，UTF-8）
-└── details/
-    ├── 某首歌__<hash>.json
+├── latest.log              # 本次运行的全量日志（每次运行覆盖，UTF-8）
+├── details/
+│   ├── 某首歌__<hash>.json
+│   └── ...
+└── Genre description/
+    ├── 某首歌__<hash>.txt  # 该曲的完整评价（可读文本）
     └── ...
 ```
 
@@ -259,6 +262,24 @@ log/
   "elapsed_sec": 3.21
 }
 ```
+
+- `Genre description/*.txt`：每首歌的**完整评价**（人类可读），直接把模型输出落盘：
+
+  ```text
+  歌曲: Aphonia.mp3
+  路径: C:\music\Aphonia.mp3
+  风格: Pop, R&B
+  来源: reasoning_content
+  ============================================================
+
+  Genre: Pop, R&B
+
+  Tempo: 慢板
+  ...
+  ```
+
+  「来源」标明这段文字取自 `content` 还是 `reasoning_content`（thinking 未闭合时
+  答案落在后者）。文件名与 `details` 同名前缀，可直接对照原始请求/响应。
 
 - 文件名由「歌名 + 绝对路径哈希」决定：同一首歌多次分析覆盖同一文件，并发安全；
 - 分析失败也会落一份明细（`error` 字段记录原因）；

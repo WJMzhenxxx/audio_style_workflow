@@ -184,7 +184,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"分析端点 : {client.name}（{getattr(client, 'endpoint', 'in-process mock')}）")
     print(f"自定义标签: TXXX:{config.custom_tag_key} / {config.custom_tag_key}"
           + ("（dry-run，不写入）" if config.dry_run else ""))
-    print(f"日志      : {log_paths.latest}（明细目录 {log_paths.details}）")
+    print(f"日志      : {log_paths.latest}（明细 {log_paths.details}，评价 {log_paths.descriptions}）")
     if config.skip_scanned:
         state_desc = "启用" + ("（重置记录）" if config.reset_state else "") \
             + ("；dry-run 下不读取/不写入记录" if config.dry_run else "")

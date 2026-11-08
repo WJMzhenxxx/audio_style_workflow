@@ -8,6 +8,7 @@ from audio_style_workflow.api.mock_client import MockSongAnalysisClient
 from audio_style_workflow.logging_setup import (
     AnalysisDetailRecorder,
     DEFAULT_LOG_DIR,
+    DESCRIPTION_DIR_NAME,
     DETAILS_DIR_NAME,
     LATEST_LOG_NAME,
     describe_request,
@@ -34,8 +35,10 @@ def test_prepare_log_dirs_creates_structure(tmp_path):
     paths = prepare_log_dirs(tmp_path / "mylog")
     assert paths.root.is_dir()
     assert paths.details.is_dir()
+    assert paths.descriptions.is_dir()
     assert paths.latest.name == LATEST_LOG_NAME
     assert paths.details.name == DETAILS_DIR_NAME
+    assert paths.descriptions.name == DESCRIPTION_DIR_NAME
 
 
 def test_prepare_log_dirs_default_is_log(tmp_path, monkeypatch):
@@ -117,6 +120,45 @@ def test_recorder_writes_request_and_response(tmp_path):
     assert "recorded_at" in data
 
 
+def test_recorder_writes_description(tmp_path):
+    rec = AnalysisDetailRecorder(tmp_path / "log")
+    audio = tmp_path / "歌曲 A.mp3"
+    audio.write_bytes(b"x")
+
+    target = rec.write_description(
+        audio,
+        description="Genre: Pop, R&B\n\nTempo: 慢板\n\n一句完整评价。",
+        styles=["Pop", "R&B"],
+        content_source="reasoning_content",
+    )
+    assert target is not None and target.is_file()
+    assert target.parent.name == DESCRIPTION_DIR_NAME
+    assert target.suffix == ".txt"
+
+    text = target.read_text(encoding="utf-8")
+    assert "歌曲: 歌曲 A.mp3" in text
+    assert "风格: Pop, R&B" in text
+    assert "来源: reasoning_content" in text
+    assert "一句完整评价。" in text
+
+
+def test_recorder_description_empty_is_skipped(tmp_path):
+    rec = AnalysisDetailRecorder(tmp_path / "log")
+    audio = tmp_path / "x.mp3"
+    audio.write_bytes(b"x")
+    assert rec.write_description(audio, description="   ") is None
+    assert list(rec.descriptions_dir.glob("*.txt")) == []
+
+
+def test_recorder_description_path_matches_details(tmp_path):
+    rec = AnalysisDetailRecorder(tmp_path / "log")
+    audio = tmp_path / "song.mp3"
+    audio.write_bytes(b"x")
+    d = rec.path_for(audio)
+    t = rec.description_path_for(audio)
+    assert d.stem == t.stem  # 同一首歌，JSON 与 TXT 同名前缀
+
+
 def test_recorder_records_error(tmp_path):
     rec = AnalysisDetailRecorder(tmp_path / "log")
     audio = tmp_path / "bad.mp3"
@@ -164,6 +206,36 @@ def test_workflow_writes_detail_per_analyzed_song(tmp_path):
         assert data["response"]["status"] == "ok"
         assert data["request"]["client"] == "mock"
         assert data["audio"].endswith(".mp3")
+
+
+def test_workflow_writes_description_per_song(tmp_path):
+    from audio_style_workflow.api.base import SongAnalysisClient
+
+    music = tmp_path / "music"
+    music.mkdir()
+    (music / "a.mp3").write_bytes(b"ID3-fake")
+
+    class Describing(SongAnalysisClient):
+        name = "describing"
+
+        def analyze(self, audio_path):
+            return {
+                "status": "ok",
+                "styles": ["Pop", "R&B"],
+                "description": "Genre: Pop, R&B\n\n这是一段完整的歌曲评价。",
+                "content_source": "reasoning_content",
+            }
+
+    config = WorkflowConfig(root=music, log_dir=tmp_path / "log")
+    run_workflow(Describing(), StyleParser(), config)
+
+    files = list((tmp_path / "log" / DESCRIPTION_DIR_NAME).glob("*.txt"))
+    assert len(files) == 1, files
+    text = files[0].read_text(encoding="utf-8")
+    assert "歌曲: a.mp3" in text
+    assert "风格: Pop, R&B" in text
+    assert "来源: reasoning_content" in text
+    assert "这是一段完整的歌曲评价。" in text
 
 
 def test_workflow_without_log_dir_writes_nothing(tmp_path):

@@ -282,8 +282,24 @@ def step_analyze(
     return state
 
 
+def _analysis_description(analysis: Any) -> Optional[str]:
+    """从分析响应里取出「歌曲评价」文本（兼容各端点/客户端的键名）。"""
+    if not isinstance(analysis, dict):
+        return None
+    for key in ("description", "reasoning", "text", "caption"):
+        value = analysis.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser) -> PipelineState:
-    """从分析响应中提取风格（JSON 优先，LLM 兜底）。"""
+    """从分析响应中提取风格（JSON 优先，LLM 兜底）。
+
+    若 ``config.log_dir`` 已设置，解析出风格后把完整评价写入
+    ``<log_dir>/Genre description/*.txt``。
+    """
+    recorder = AnalysisDetailRecorder(config.log_dir) if config.log_dir is not None else None
     for task in state.tasks:
         if task.error or task.skip_reason or task.analysis is None:
             continue
@@ -302,6 +318,21 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
             source,
             f", 置信度 {confidence:.2f}" if confidence is not None else "",
         )
+        if recorder is not None:
+            description = _analysis_description(task.analysis)
+            if description:
+                try:
+                    recorder.write_description(
+                        task.path,
+                        description=description,
+                        styles=styles,
+                        content_source=(
+                            task.analysis.get("content_source")
+                            if isinstance(task.analysis, dict) else None
+                        ),
+                    )
+                except Exception as exc:  # 评价落盘失败不影响主流程
+                    logger.warning("写入歌曲评价失败（%s）: %s", task.path.name, exc)
     return state
 
 

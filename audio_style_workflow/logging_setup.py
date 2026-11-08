@@ -40,6 +40,8 @@ DEFAULT_LOG_DIR = Path("log")
 LATEST_LOG_NAME = "latest.log"
 #: 逐曲明细子目录名
 DETAILS_DIR_NAME = "details"
+#: 逐曲「歌曲评价」子目录名（可读文本，每首歌一份）
+DESCRIPTION_DIR_NAME = "Genre description"
 
 _LOGGER_NAME = "audio_style_workflow"
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -54,17 +56,25 @@ class LogPaths:
     root: Path
     latest: Path
     details: Path
+    descriptions: Path
 
 
 # ----------------------------------------------------------------------
 # 目录与日志配置
 # ----------------------------------------------------------------------
 def prepare_log_dirs(log_dir: Optional[Path] = None) -> LogPaths:
-    """确保 ``<log_dir>`` 与 ``<log_dir>/details`` 存在，返回路径集合。"""
+    """确保日志根目录、``details`` 与 ``Genre description`` 存在。"""
     root = Path(log_dir) if log_dir is not None else DEFAULT_LOG_DIR
     details = root / DETAILS_DIR_NAME
+    descriptions = root / DESCRIPTION_DIR_NAME
     details.mkdir(parents=True, exist_ok=True)
-    return LogPaths(root=root, latest=root / LATEST_LOG_NAME, details=details)
+    descriptions.mkdir(parents=True, exist_ok=True)
+    return LogPaths(
+        root=root,
+        latest=root / LATEST_LOG_NAME,
+        details=details,
+        descriptions=descriptions,
+    )
 
 
 def _drop_managed_handlers(target: logging.Logger) -> None:
@@ -167,10 +177,57 @@ class AnalysisDetailRecorder:
     def details_dir(self) -> Path:
         return self._paths.details
 
+    @property
+    def descriptions_dir(self) -> Path:
+        return self._paths.descriptions
+
     def path_for(self, audio_path: Path) -> Path:
         """同一首歌稳定映射到同一个明细文件。"""
         audio = Path(audio_path)
         return self._paths.details / f"{_sanitize_stem(audio.stem)}__{_stable_digest(audio)}.json"
+
+    def description_path_for(self, audio_path: Path) -> Path:
+        """同一首歌稳定映射到同一个「歌曲评价」文本文件。"""
+        audio = Path(audio_path)
+        return (
+            self._paths.descriptions
+            / f"{_sanitize_stem(audio.stem)}__{_stable_digest(audio)}.txt"
+        )
+
+    def write_description(
+        self,
+        audio_path: Path,
+        *,
+        description: str,
+        styles: Optional[list[str]] = None,
+        content_source: Optional[str] = None,
+    ) -> Optional[Path]:
+        """把一首歌的完整评价（模型 description / reasoning_content）写成可读文本。
+
+        内容为空时跳过（返回 ``None``）。文件名与 details 一一对应，便于对照。
+        """
+        text = (description or "").strip()
+        if not text:
+            return None
+        audio = Path(audio_path)
+        header = [
+            f"歌曲: {audio.name}",
+            f"路径: {audio.resolve()}" if audio.exists() else f"路径: {audio}",
+        ]
+        if styles:
+            header.append(f"风格: {', '.join(styles)}")
+        if content_source:
+            header.append(f"来源: {content_source}")
+        body = "\n".join(header) + "\n" + "=" * 60 + "\n\n" + text + "\n"
+
+        target = self.description_path_for(audio)
+        with self._lock:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_name(target.name + ".tmp")
+            tmp.write_text(body, encoding="utf-8")
+            tmp.replace(target)
+        logger.debug("[description] 已写入歌曲评价: %s", target)
+        return target
 
     def record(
         self,
@@ -211,6 +268,7 @@ __all__: Iterable[str] = (
     "DEFAULT_LOG_DIR",
     "LATEST_LOG_NAME",
     "DETAILS_DIR_NAME",
+    "DESCRIPTION_DIR_NAME",
     "LogPaths",
     "prepare_log_dirs",
     "setup_logging",
