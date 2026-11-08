@@ -59,6 +59,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     client.add_argument("--sglang-custom-logit-processor", default=os.environ.get("SGLANG_CUSTOM_LOGIT_PROCESSOR"), metavar="JSON_OR_@FILE", help="thinking budget 所需的 custom_logit_processor 序列化串（Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str() 的输出）；也可写 @文件路径，或设环境变量 SGLANG_CUSTOM_LOGIT_PROCESSOR")
     client.add_argument("--sglang-path-map", action="append", default=None, metavar="LOCAL=REMOTE",
                         help="把本地路径前缀映射为服务端可见路径，可重复。例：--sglang-path-map \"C:\\music=/data/music\"（服务端读不到客户端路径时必须用）")
+    client.add_argument("--sglang-clip", type=int, default=0, metavar="SECONDS",
+                        help="只取这么长的音频送模型（0=整首）。取中段可避开前奏、让模型听到副歌，常能提升子流派判断")
+    client.add_argument("--sglang-clip-mode", choices=["middle", "start"], default="middle",
+                        help="--sglang-clip 的截取位置：middle=中间窗口（默认）；start=从头")
     client.add_argument("--sglang-audio-base64", action="store_true",
                         help="把音频以 data URL（base64）内联进请求，无需共享文件系统（体积增大约 33%%）")
     client.add_argument("--prompt-lang", choices=["zh", "en"], default="zh",
@@ -137,6 +141,9 @@ def build_client(args: argparse.Namespace):
             custom_logit_processor=args.sglang_custom_logit_processor,
             audio_path_map=parse_path_maps(args.sglang_path_map),
             audio_base64=getattr(args, "sglang_audio_base64", False),
+            clip_seconds=getattr(args, "sglang_clip", 0),
+            clip_mode=getattr(args, "sglang_clip_mode", "middle"),
+            ffmpeg=args.ffmpeg,
         )
     if args.local:
         logger.info("已选择本地模型分析（忽略 --endpoint）")

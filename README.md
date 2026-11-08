@@ -306,6 +306,38 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --per-song --state-flush-every 1
 ```
 
+### 提高识别准确率（子流派识别不准时）
+
+模型把 K-Pop 说成 Pop 这类「子流派判粗」，通常不是模型坏了，而是信息不够或输出被摊薄。
+按性价比从高到低：
+
+```bash
+# ① 只送中段 60 秒：避开前奏，让模型听到主歌/副歌（最可能有效，请求也从 57MB 降到 2.5MB）
+--sglang-clip 60
+
+# ② 从头 90 秒（如果歌曲一上来就是标志性段落）
+--sglang-clip 90 --sglang-clip-mode start
+
+# ③ 关掉多余字段，让它专注给标签（用极简 prompt 单独跑一遍对比）
+#    见 examples/probe_sglang.py --prompt "..."
+```
+
+其他可叠加的手段：
+
+1. **prompt 已要求「最具体的子流派优先，最多 5 个」**，并列出 K-Pop / City Pop / J-Pop /
+   Neo-Soul 等示例，减少退化成笼统 `Pop`；
+2. **别名归一化**：`kpop` / `Korean Pop` / `케이팝` / `韩流` 都会统一成 `K-Pop`，
+   `citypop` → `City Pop`，`rnb` → `R&B` 等；
+3. **多采样投票**：同一首跑 `--temperature` 非 0 的 N 次再取交集/多数（需改客户端参数，
+   当前 `temperature=0.0` 是贪心解码，最"安全"的答案往往就是 Pop）；
+4. **二段式**：先用极简 prompt（只问流派）拿候选，再用详情 prompt 复核；比一次问 8 个字段更专注；
+5. **LLM 复核**：`--llm-model` 已能兜底解析，也可以让它把候选归一到你的词表；
+6. **换更大的模型**：MOSS-Music 8B 对文化性/地域性子流派（K-Pop、City Pop）本来就偏弱，
+   这类判断更适合带文化先验的模型或人工规则补充。
+
+判断"是不是截断导致的"很简单：同一首歌各跑一次 `--sglang-clip 60` 和不加截取，
+看 `log/Genre description/*.txt` 的结论是否变化。
+
 ### 中断后怎么续跑
 
 | 跳过参数 | 中断后能否跳过已完成 |

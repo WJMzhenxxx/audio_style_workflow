@@ -44,8 +44,10 @@ _MAX_STYLES = 8
 #: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
     "Listen to this track and analyze it. Reply in this exact format:\n"
-    "Line 1: its musical styles/genres as a short comma-separated list "
-    "(for example: Pop, R&B, Jazz).\n"
+    "Line 1: its musical styles/subgenres, comma-separated, MOST SPECIFIC FIRST, "
+    "up to 5 (e.g. K-Pop, City Pop, J-Pop, Neo-Soul, Dream Pop). Avoid a bare "
+    "'Pop'/'Rock' when a more specific subgenre fits; consider vocal language, "
+    "idol-group production, rap breaks and EDM drops.\n"
     "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
     "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
     "Line 4: Key: <key signature, e.g. C major / A minor>\n"
@@ -61,7 +63,9 @@ DEFAULT_ANALYSIS_PROMPT = (
 #: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
     "请聆听这段音频并分析。严格按下面 8 行输出，不要加任何多余前缀：\n"
-    "<风格标签，用英文书写，逗号分隔，例如 Pop, R&B, Dream Pop, Synth Pop>\n"
+    "<风格/子流派标签，用英文书写，逗号分隔，最多 5 个，**最具体的放最前**；"
+    "例如 K-Pop, City Pop, J-Pop, Neo-Soul, Dream Pop。若可判断更细的子流派，"
+    "不要只写笼统的 Pop/Rock；可参考演唱语言、偶像团体制作、说唱段落、EDM drop 等线索>\n"
     "BPM: <每分钟节拍数，整数，例如 120>\n"
     "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
     "Key: <调性，用英文，例如 C major / A minor>\n"
@@ -86,6 +90,37 @@ def get_analysis_prompt(lang: str = "en") -> str:
     if key not in ANALYSIS_PROMPTS:
         raise ValueError(f"未知的 prompt 语言: {lang!r}（可选: {', '.join(ANALYSIS_PROMPTS)}）")
     return ANALYSIS_PROMPTS[key]
+
+#: 常见别名 -> 规范写法（子流派尤其容易写成多种形式）
+_GENRE_ALIASES = {
+    "kpop": "K-Pop", "k-pop": "K-Pop", "k pop": "K-Pop", "korean pop": "K-Pop",
+    "korean idol": "K-Pop", "케이팝": "K-Pop", "韩流": "K-Pop", "韩国流行": "K-Pop",
+    "citypop": "City Pop", "city pop": "City Pop", "シティポップ": "City Pop",
+    "城市流行": "City Pop", "都市流行": "City Pop",
+    "jpop": "J-Pop", "j-pop": "J-Pop", "j pop": "J-Pop", "japanese pop": "J-Pop",
+    "日本流行": "J-Pop",
+    "cpop": "C-Pop", "c-pop": "C-Pop", "mandopop": "Mandopop", "国语流行": "Mandopop",
+    "cantopop": "Cantopop", "粤语流行": "Cantopop",
+    "rnb": "R&B", "r&b": "R&B", "rhythm and blues": "R&B", "节奏布鲁斯": "R&B",
+    "hip hop": "Hip-Hop", "hiphop": "Hip-Hop", "hip-hop": "Hip-Hop", "嘻哈": "Hip-Hop",
+    "edm": "EDM", "electronic dance music": "EDM",
+    "lofi": "Lo-Fi", "lo fi": "Lo-Fi", "lo-fi": "Lo-Fi",
+    "drum and bass": "Drum & Bass", "dnb": "Drum & Bass", "d&b": "Drum & Bass",
+    "synthwave": "Synthwave", "synth pop": "Synth-Pop", "synthpop": "Synth-Pop",
+    "indie pop": "Indie Pop", "indiepop": "Indie Pop",
+    "dream pop": "Dream Pop", "dreampop": "Dream Pop",
+    "neo soul": "Neo-Soul", "neosoul": "Neo-Soul",
+    "trip hop": "Trip-Hop", "triphop": "Trip-Hop",
+}
+
+
+def normalize_genre(name: str) -> str:
+    """把常见别名/大小写变体规范成通行写法（``kpop`` -> ``K-Pop``）。"""
+    text = (name or "").strip()
+    if not text:
+        return text
+    return _GENRE_ALIASES.get(text.lower(), text)
+
 
 #: 解析风格标签的启发式参数
 _MAX_LABELS = 8
@@ -176,6 +211,7 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
             continue
         if len(label) > _MAX_LABEL_LEN or len(label.split()) > _MAX_LABEL_WORDS:
             return []  # 超长/多词片段 -> 整行大概率是描述句，放弃
+        label = normalize_genre(label)
         if label not in labels:
             labels.append(label)
     if not (1 <= len(labels) <= _MAX_LABELS):

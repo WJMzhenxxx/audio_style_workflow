@@ -52,11 +52,14 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
+import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, Optional, Sequence
 
 import httpx
 
+from ..splitter import resolve_ffmpeg
 from ..style_parser import (
     DEFAULT_ANALYSIS_PROMPT,
     extract_genre_rationale,
@@ -206,6 +209,22 @@ def _looks_like_unsupported_processor(message: str) -> bool:
     return any(h in low for h in _UNSUPPORTED_PROCESSOR_HINTS)
 
 
+def _audio_duration_seconds(path: Path) -> Optional[float]:
+    """用 mutagen 读时长（分钟级精度足够决定截取窗口）。"""
+    try:
+        if path.suffix.lower() == ".flac":
+            from mutagen.flac import FLAC
+
+            return float(FLAC(str(path)).info.length)
+        if path.suffix.lower() == ".mp3":
+            from mutagen.mp3 import MP3
+
+            return float(MP3(str(path)).info.length)
+    except Exception:
+        return None
+    return None
+
+
 class SglangMusicClient(SongAnalysisClient):
     """调用 sglang 音乐理解服务的分析客户端（音频传本机路径）。
 
@@ -232,6 +251,9 @@ class SglangMusicClient(SongAnalysisClient):
         custom_logit_processor: Optional[str] = None,
         audio_path_map: Optional[Sequence[tuple[str, str]]] = None,
         audio_base64: bool = False,
+        clip_seconds: int = 0,
+        clip_mode: Literal["middle", "start"] = "middle",
+        ffmpeg: Optional[str] = None,
         timeout: float = 600.0,
         retries: int = 2,
         transport: Optional[Any] = None,
@@ -265,6 +287,10 @@ class SglangMusicClient(SongAnalysisClient):
         ]
         #: 为 True 时把音频以 data URL（base64）内联进请求，无需共享文件系统
         self.audio_base64 = bool(audio_base64)
+        #: >0 时只截取这么多秒送模型（避开前奏，也让模型"听到"副歌）
+        self.clip_seconds = max(0, int(clip_seconds))
+        self.clip_mode = clip_mode
+        self._ffmpeg = ffmpeg
 
         #: 连续返回相同文本的计数（用于诊断"音频没被读到"）
         self._last_text_digest: Optional[str] = None
@@ -315,9 +341,52 @@ class SglangMusicClient(SongAnalysisClient):
                 "大文件建议改用 --sglang-path-map + 共享文件系统",
                 audio_path.name, size / 1e6, size * 4 / 3 / 1e6,
             )
+        if self.clip_seconds > 0:
+            clipped = self._clip_audio(audio_path)
+            if clipped is not None:
+                encoded = base64.b64encode(clipped).decode("ascii")
+                return f"data:audio/wav;base64,{encoded}"
+
         mime = _AUDIO_MIME.get(audio_path.suffix.lower(), "application/octet-stream")
         encoded = base64.b64encode(audio_path.read_bytes()).decode("ascii")
         return f"data:{mime};base64,{encoded}"
+
+    def _clip_audio(self, audio_path: Path) -> Optional[bytes]:
+        """截取一段音频并转成 16k 单声道 WAV 字节（模型内部也是按这个格式解码）。
+
+        ``middle`` 取中间窗口（避开前奏，通常能覆盖主歌/副歌），
+        ``start`` 从头截取。ffmpeg 不可用时返回 None（退回整首）。
+        """
+        ffmpeg = resolve_ffmpeg(self._ffmpeg)
+        if not ffmpeg:
+            logger.warning("[sglang] 找不到 ffmpeg，无法截取音频，改为发送整首")
+            return None
+        duration = _audio_duration_seconds(audio_path)
+        clip = self.clip_seconds
+        start = 0.0
+        if duration and duration > clip:
+            if self.clip_mode == "middle":
+                start = max(0.0, (duration - clip) / 2)
+            else:
+                start = 0.0
+            clip = min(clip, duration)
+        with tempfile.TemporaryDirectory(prefix="asw_clip_") as tmpdir:
+            out = Path(tmpdir) / "clip.wav"
+            cmd = [
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", f"{start:.3f}", "-t", f"{clip:.3f}",
+                "-i", str(audio_path),
+                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out),
+            ]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True)
+            except subprocess.CalledProcessError as exc:
+                detail = (exc.stderr or b"").decode("utf-8", "replace")[-300:]
+                logger.warning("[sglang] ffmpeg 截取失败（%s），改为发送整首: %s", audio_path.name, detail)
+                return None
+            if not out.is_file():
+                return None
+            return out.read_bytes()
 
     @staticmethod
     def _describe_audio(audio_payload: str) -> str:

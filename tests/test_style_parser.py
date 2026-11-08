@@ -278,3 +278,14 @@ def test_extract_review():
     assert extract_review("评价：一首很棒的单曲") == "一首很棒的单曲"
     assert extract_review("comment: solid track") == "solid track"
     assert extract_review("Mood: 温暖") is None
+
+
+def test_genre_alias_normalization():
+    from audio_style_workflow.style_parser import extract_styles_from_text, normalize_genre
+
+    assert normalize_genre("kpop") == "K-Pop"
+    assert normalize_genre("Korean Pop") == "K-Pop"
+    assert normalize_genre("citypop") == "City Pop"
+    assert normalize_genre("Rnb") == "R&B"
+    assert normalize_genre("Dream Pop") == "Dream Pop"
+    assert extract_styles_from_text("kpop, Citypop, rnb") == ["K-Pop", "City Pop", "R&B"]

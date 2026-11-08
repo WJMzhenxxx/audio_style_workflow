@@ -672,3 +672,34 @@ def test_cli_per_song_flag(tmp_path):
 
     assert build_arg_parser().parse_args([str(tmp_path), "--per-song"]).per_song is True
     assert build_arg_parser().parse_args([str(tmp_path)]).per_song is False
+
+
+def test_clip_audio_payload(tmp_path):
+    """--sglang-clip：截取中间一段并转成 16k 单声道 WAV。"""
+    import base64
+    import subprocess
+
+    from audio_style_workflow.splitter import resolve_ffmpeg
+
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("本机没有 ffmpeg")
+
+    src = tmp_path / "long.mp3"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=30",
+         "-c:a", "libmp3lame", str(src)],
+        check=True, capture_output=True,
+    )
+
+    client = SglangMusicClient(api_mode="generate", audio_base64=True, clip_seconds=10)
+    uri = client._audio_payload(src)
+    head, _, body = uri.partition(",")
+    assert head == "data:audio/wav;base64"
+    raw = base64.b64decode(body, validate=True)
+    assert len(raw) > 1000  # 有实际音频数据
+
+    # 关掉截取则应发原始文件
+    plain = SglangMusicClient(api_mode="generate", audio_base64=True)
+    assert plain._audio_payload(src).startswith("data:audio/mpeg;base64,")
