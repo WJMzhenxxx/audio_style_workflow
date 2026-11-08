@@ -24,3 +24,5 @@ Thumbs.db
 # Workflow runtime artifacts
 .audio_style_scan.json
 log/
+# thinking budget 的序列化串（由本机 sglang 导出，属运行期配置）
+processor.json
