@@ -607,3 +607,51 @@ def test_no_warning_when_prompt_tokens_large(audio_file, caplog):
     with caplog.at_level(logging.WARNING, logger="audio_style_workflow.api.sglang_client"):
         client.analyze(audio_file)
     assert not any("音频很可能没有被服务端解析" in r.message for r in caplog.records)
+
+
+def test_chat_without_audio_falls_back_to_generate(audio_file):
+    """该服务的 chat 端点不吃 audio_url 时，自动改用 /generate 并记住。"""
+    calls = []
+
+    def handler(request):
+        path = request.url.path
+        calls.append(path)
+        if path.endswith("/v1/chat/completions"):
+            return httpx.Response(200, json={
+                "choices": [{"finish_reason": "stop", "message": {"content": "Pop\nx"}}],
+                "usage": {"prompt_tokens": 105},
+            })
+        return httpx.Response(200, json={
+            "text": "list: Dream Pop, Synth Pop\nBPM: 100\nTempo: moderate\nKey: F# major",
+            "meta_info": {"prompt_tokens": 5126},
+        })
+
+    client = SglangMusicClient(api_mode="chat", transport=httpx.MockTransport(handler))
+    payload = client.analyze(audio_file)
+
+    assert calls == ["/v1/chat/completions", "/generate"]
+    assert payload["api_mode"] == "generate"
+    assert payload["styles"] == ["Dream Pop", "Synth Pop"]
+    assert payload["bpm"] == 100
+    assert payload["key"] == "F# major"
+    assert payload["prompt_tokens"] == 5126
+
+    # 后续歌曲不再浪费一次 chat 请求
+    client.analyze(audio_file)
+    assert calls[-1] == "/generate"
+
+
+def test_chat_with_audio_keeps_chat(audio_file):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={
+            "choices": [{"finish_reason": "stop", "message": {"content": "Jazz\nok"}}],
+            "usage": {"prompt_tokens": 2000},
+        })
+
+    client = SglangMusicClient(api_mode="chat", transport=httpx.MockTransport(handler))
+    payload = client.analyze(audio_file)
+    assert payload["api_mode"] == "chat"
+    assert calls == ["/v1/chat/completions"]

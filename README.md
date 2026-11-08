@@ -177,13 +177,29 @@ sglang 的 `load_audio` 原生支持 `data:` URL（注意：**裸 base64 不支�
 ### 单曲探测（排查「输出与歌曲无关」）
 
 ```bash
-# 直接对服务端发一次请求，打印 finish_reason / content / reasoning / 原始 JSON
+# 直接对服务端发一次请求，打印 finish_reason / usage / content / reasoning / 原始 JSON
 python examples/probe_sglang.py "music/Aphonia.mp3" \
     --base-url http://10.0.0.5:43449 --base64 --max-tokens 2048
 
-# 换极简 prompt，判断是 prompt 问题还是音频没进去
+# 走 /generate（audio_data）路径
 python examples/probe_sglang.py "music/Aphonia.mp3" \
-    --base-url http://10.0.0.5:43449 --base64 --prompt "用一句话描述这段音频。"
+    --base-url http://10.0.0.5:43449 --base64 --api generate
+```
+
+#### 已知问题：部分 sglang 版本的 chat 端点会丢弃音频
+
+某些版本（实测 MOSS-Music + `moss-audio` 分支）的 `/v1/chat/completions`
+**不会把 `audio_url` 转成音频输入**：请求发出 19 MB，响应里
+`prompt_tokens` 却只有 ~105（纯文本规模），模型只是在续写 prompt，
+于是不同歌曲得到几乎相同的答案。同一服务端的 `/generate`（`audio_data`）
+则正常：`prompt_tokens` 跳到 5000+，输出随歌曲变化。
+
+客户端已内置自适应：用 `--sglang-api chat` 时若检测到 `prompt_tokens`
+仍是纯文本规模，会**自动改用 `/generate` 并记住**，后续歌曲不再重试 chat。
+
+```bash
+# 也可以直接指定，省掉一次探测
+--sglang-api generate
 ```
 
 #### `content` 为 null（答案落在 `reasoning_content`）

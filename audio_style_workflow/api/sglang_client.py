@@ -273,6 +273,8 @@ class SglangMusicClient(SongAnalysisClient):
         #: 最近一次 chat 响应的 usage.prompt_tokens
         self._last_prompt_tokens: Optional[int] = None
         self._audio_consumed_warned = False
+        #: 该服务的 chat 端点不吃 audio_url 时置 True，之后直接走 /generate
+        self._chat_audio_broken = False
 
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -368,25 +370,16 @@ class SglangMusicClient(SongAnalysisClient):
                 preview or "(空)",
             )
 
-    def _check_audio_consumed(self) -> None:
+    def _audio_missing(self) -> bool:
         """用 usage.prompt_tokens 判断音频有没有真正进入模型。
 
         纯文本 prompt 约 100 token；一段音频至少要几百个 token。若
         prompt_tokens 仍然很小，说明服务端没解析请求里的音频。
         """
         tokens = self._last_prompt_tokens
-        if tokens is None or self._audio_consumed_warned:
-            return
-        if tokens < _TEXT_ONLY_PROMPT_TOKENS:
-            self._audio_consumed_warned = True
-            logger.warning(
-                "[sglang] usage.prompt_tokens=%d，音频很可能没有被服务端解析"
-                "（纯文本 prompt 约 %d token）。模型只是在续写 prompt 文本，"
-                "所以不同歌曲会得到几乎相同的答案。可先试 --sglang-api generate，"
-                "或确认服务端模型/请求格式支持该音频字段。",
-                tokens,
-                _TEXT_ONLY_PROMPT_TOKENS,
-            )
+        if tokens is None:
+            return False
+        return tokens < _TEXT_ONLY_PROMPT_TOKENS
 
     def _disable_thinking_budget(self, reason: str) -> None:
         """服务端拒绝该字段时自动降级（只提示一次）。"""
@@ -407,29 +400,41 @@ class SglangMusicClient(SongAnalysisClient):
         audio_url = self._audio_payload(audio_path)
         self._last_sent_path = self._describe_audio(audio_url)
 
-        logger.info(
-            "[sglang] %s POST %s (%s, max_new_tokens=%d)",
-            audio_path.name,
-            self._url_generate if self.api_mode == "generate" else self._url_chat,
-            self._last_sent_path,
-            self.max_new_tokens,
-        )
-        if self.api_mode == "generate":
+        # chat 端点在部分 sglang 版本里不会把 audio_url 转成音频输入；
+        # 一旦发现就记住并改走 /generate（audio_data 路径）。
+        use_chat = self.api_mode == "chat" and not self._chat_audio_broken
+        if use_chat:
+            logger.info(
+                "[sglang] %s POST %s (%s, max_new_tokens=%d)",
+                audio_path.name, self._url_chat, self._last_sent_path, self.max_new_tokens,
+            )
+            text, reasoning, raw_response, content_source = self._analyze_via_chat(audio_url)
+            if self._audio_missing():
+                self._chat_audio_broken = True
+                logger.warning(
+                    "[sglang] 该服务的 /v1/chat/completions 没有把音频送进模型"
+                    "（prompt_tokens=%s，纯文本规模），已自动改用 /generate（audio_data）。"
+                    "后续歌曲将直接走 generate，无需再试 chat。",
+                    self._last_prompt_tokens,
+                )
+                use_chat = False
+        if not use_chat:
+            logger.info(
+                "[sglang] %s POST %s (%s, max_new_tokens=%d)",
+                audio_path.name, self._url_generate, self._last_sent_path, self.max_new_tokens,
+            )
             text, raw_response = self._analyze_via_generate(audio_url)
             reasoning = None
             content_source = "text"
-        else:
-            text, reasoning, raw_response, content_source = self._analyze_via_chat(audio_url)
 
+        used_mode = "chat" if use_chat else "generate"
         self._check_identical_streak(text)
-        if self.api_mode == "chat":
-            self._check_audio_consumed()
 
         payload: dict[str, Any] = {
             "status": "ok",
             "engine": self.name,
             "endpoint": self.endpoint,
-            "api_mode": self.api_mode,
+            "api_mode": used_mode,
             "description": text.strip(),
             # content / reasoning_content（思考未闭合时只能从后者取答案）
             "content_source": content_source,
@@ -440,7 +445,7 @@ class SglangMusicClient(SongAnalysisClient):
             payload["reasoning"] = reasoning
         if self.thinking_budget is not None:
             payload["thinking_budget_applied"] = bool(self.thinking_budget_applied)
-        if self.api_mode == "chat" and self._last_finish_reason:
+        if used_mode == "chat" and self._last_finish_reason:
             payload["finish_reason"] = self._last_finish_reason
         if self._last_prompt_tokens is not None:
             payload["prompt_tokens"] = self._last_prompt_tokens
@@ -474,6 +479,10 @@ class SglangMusicClient(SongAnalysisClient):
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise SongAnalysisError(f"sglang /generate 响应缺少 text 字段: {_preview(raw)}")
+        meta = raw.get("meta_info") if isinstance(raw.get("meta_info"), dict) else {}
+        prompt_tokens = meta.get("prompt_tokens")
+        if isinstance(prompt_tokens, int):
+            self._last_prompt_tokens = prompt_tokens
         return text, raw
 
     # ------------------------------------------------------------------

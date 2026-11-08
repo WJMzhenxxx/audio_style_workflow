@@ -186,3 +186,14 @@ def test_rationale_chinese_label_and_causal_fallback():
 def test_rationale_missing_returns_none():
     assert extract_genre_rationale("") is None
     assert extract_genre_rationale("Tempo: Moderato\nKey: C major") is None
+
+
+def test_styles_strip_instruction_echo():
+    """模型把 prompt 指令原样接续时，要能从冒号后取到标签。"""
+    from audio_style_workflow.style_parser import extract_styles_from_text
+
+    text = "its musical styles/genres as a short comma-separated list: Dream Pop, Ambient Pop, Synth Pop\nBPM: 100"
+    assert extract_styles_from_text(text) == ["Dream Pop", "Ambient Pop", "Synth Pop"]
+
+    # 单字段（冒号前只有一两个词）不应被误切
+    assert extract_styles_from_text("Pop, R&B, Jazz") == ["Pop", "R&B", "Jazz"]

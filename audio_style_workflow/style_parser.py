@@ -66,12 +66,33 @@ _SPLIT_RE = re.compile(r"[,，;；、/|\t]|\s{2,}")
 _TRAILING_PUNCT_RE = re.compile(r"[.。!！?？\"'\”’]+\s*$")
 
 
+def _strip_instruction_echo(line: str) -> str:
+    """去掉模型回声的指令前缀。
+
+    生成式模型常把 prompt 里的说明原样接续，例如::
+
+        its musical styles/genres as a short comma-separated list: Pop, R&B
+
+    此时冒号前是一整句说明（词数多），冒号后才是真正答案。单个字段名
+    （``Tempo: 100``）只有一个词，不会被误切。
+    """
+    if ":" not in line and "：" not in line:
+        return line
+    separator = ":" if ":" in line else "："
+    head, _, tail = line.rpartition(separator)
+    tail = tail.strip()
+    if tail and len(head.split()) >= 3:
+        return tail
+    return line
+
+
 def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str]:
     """从生成式模型输出的第一行提取风格标签（确定性解析，无需 LLM）。
 
     规则：
 
-    1. 取第一条非空行；剥掉 "Styles:" / "Genres:" / "风格:" 等前缀；
+    1. 取第一条非空行；剥掉 "Styles:" / "Genres:" / "风格:" 等前缀，
+       以及回声的指令前缀（``...list:``）；
     2. 按 `, ， ; ； 、 / |` 及连续空格拆分；
     3. 每个标签长度须 <= 48 字符、词数 <= 4（排除被误拆的完整句子）；
     4. 标签数为 1~8 才可信（过长通常是普通描述句）。
@@ -80,6 +101,7 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
     if not first_line:
         return []
     first_line = _PREFIX_RE.sub("", first_line)
+    first_line = _strip_instruction_echo(first_line)
 
     labels: list[str] = []
     for raw in _SPLIT_RE.split(first_line):
