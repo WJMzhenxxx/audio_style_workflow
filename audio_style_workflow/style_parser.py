@@ -54,15 +54,17 @@ DEFAULT_ANALYSIS_PROMPT = (
     "production style and the overall mood it creates."
 )
 
-#: 中文版 prompt：内容全部用中文，字段名保持英文以便确定性解析
+#: 中文版 prompt：风格名 / Tempo / Key 保持英文，只有 Why 与正文用中文。
+#: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请聆听这段音频并分析，全部用中文作答。严格按下面 5 行输出：\n"
-    "<风格标签，逗号分隔，例如 流行, 节奏布鲁斯, 爵士>\n"
+    "请聆听这段音频并分析。严格按下面 5 行输出，不要加任何多余前缀：\n"
+    "<风格标签，用英文书写，逗号分隔，例如 Pop, R&B, Dream Pop, Synth Pop>\n"
     "BPM: <每分钟节拍数，整数，例如 120>\n"
-    "Tempo: <速度描述，例如 慢板 / 中板 / 快板>\n"
-    "Key: <调性，例如 C大调 / A小调>\n"
-    "Why: <用一两句话说明为什么判定为这些风格>\n"
-    "然后空一行，用中文详细描述曲风、配器、制作与整体情绪。"
+    "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
+    "Key: <调性，用英文，例如 C major / A minor>\n"
+    "Why: <用中文写一两句话，说明为什么判定为这些风格>\n"
+    "然后空一行，用中文详细描述曲风、配器、制作与整体情绪；"
+    "描述里提到风格名、速度术语、调性时仍保留英文原词。"
 )
 
 #: 语言 -> prompt 模板

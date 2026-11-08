@@ -210,6 +210,9 @@ def test_analysis_prompt_languages():
     zh = get_analysis_prompt("zh")
     en = get_analysis_prompt("en")
     assert "中文" in zh and "中文" not in en
+    # 风格名 / Tempo / Key 仍要求英文，只有 Why 与正文用中文
+    assert "英文" in zh
+    assert "中文" in zh.split("Why", 1)[1]
     assert zh != en
     with pytest.raises(ValueError):
         get_analysis_prompt("fr")

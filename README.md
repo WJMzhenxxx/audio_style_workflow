@@ -109,16 +109,19 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang
 
 #### 让模型输出中文
 
-默认 `--prompt-lang zh`，prompt 就要求「全部用中文作答」，字段名（`BPM:` /
-`Tempo:` / `Key:` / `Why:`）保持英文以便确定性解析：
+默认 `--prompt-lang zh`：**风格名、Tempo、Key 保持英文**（`Dream Pop`、
+`Moderato`、`F# major`），只有 `Why` 和评价正文用中文——这样风格标签可检索、
+可与国际元数据对齐，评述则是母语。字段名（`BPM:` / `Tempo:` / `Key:` / `Why:`）
+也保持英文以便确定性解析：
 
 ```bash
 python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:43449 \
     --sglang-audio-base64            # 默认就是中文
 ```
 
-想要英文（例如风格名统一用英文标签）就加 `--prompt-lang en`。
-中文输出下风格解析依然稳定：`第1行：流行, 节奏布鲁斯` 这类回声会被自动剥掉。
+想整段都用英文就加 `--prompt-lang en`。
+中文场景下的风格解析依然稳定：`第1行：…`、`只写风格标签，…：` 这类回声会被
+自动剥掉；即使模型偶尔给出中文风格名（`流行`、`节奏布鲁斯`）也能正常入库。
 
 #### thinking budget（需要服务端 `--enable-custom-logit-processor`）
 
@@ -273,7 +276,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--sglang-custom-logit-processor` | thinking budget 的 `custom_logit_processor` 序列化串（`to_str()` 输出）；支持 `@文件` 或环境变量 `SGLANG_CUSTOM_LOGIT_PROCESSOR` |
 | `--sglang-path-map LOCAL=REMOTE` | 把本地路径前缀映射为服务端可见路径，可重复（共享文件系统时用） |
 | `--sglang-audio-base64` | 音频以 `data:` URL（base64）内联发送，无需共享文件系统 |
-| `--prompt-lang {zh,en}` | 分析 prompt 的语言，决定模型输出语言，默认 `zh`（中文） |
+| `--prompt-lang {zh,en}` | 默认 `zh`：风格名/Tempo/Key 用英文，Why 与正文用中文；`en` 则整段英文 |
 | `--model-id` | 本地 MusicFlamingo 模型 HuggingFace ID，默认 `nvidia/music-flamingo-2601-hf` |
 | `--max-new-tokens` | 模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024） |
 | `--concurrency` | 分析端点并发请求数（本地模型自动串行化） |
