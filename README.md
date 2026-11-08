@@ -136,6 +136,14 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:4
 若本机恰好装了该 sglang 分支，则会自动调用 `to_str()`，无需手工传参。
 想跳过 budget 直接去掉 `--sglang-thinking-budget` 即可。
 
+> 为什么服务端必须开 `--enable-custom-logit-processor`：该字段会被服务端
+> `dill.loads()` **反序列化并在 scheduler 进程里执行**，等于把代码执行权交给请求方，
+> 所以 sglang 默认关闭，必须由运维显式开启——这是服务端的安全边界，客户端无法绕过。
+> 客户端能做的**自适应**：若服务端拒绝该字段，工作流会自动去掉 budget 重新请求一次，
+> 并在 `latest.log` 打一条 warning、在分析明细里标注 `thinking_budget_applied=false`，
+> 保证整批任务不因此失败。仍可用 `separate_reasoning`（只需 `--reasoning-parser`，
+> 不需要 `--enable-custom-logit-processor`）拿到思考过程。
+
 参数说明：`--sglang [BASE_URL]` 不带值时读环境变量 `SGLANG_BASE`，再回退
 `http://localhost:30000`；`--sglang-base BASE_URL` 是显式指定地址的等价形式
 （优先级最高）。推理结果统一解析为 `styles` + `description`，下游流程不变。

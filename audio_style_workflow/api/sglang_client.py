@@ -164,6 +164,21 @@ def resolve_thinking_processor(explicit: Optional[str] = None) -> str:
     )
 
 
+#: 服务端拒绝 custom logit processor 时错误信息里常见的片段
+_UNSUPPORTED_PROCESSOR_HINTS = (
+    "custom_logit_processor",
+    "custom logit processor",
+    "enable-custom-logit-processor",
+    "enable_custom_logit_processor",
+)
+
+
+def _looks_like_unsupported_processor(message: str) -> bool:
+    """判断错误是否由「服务端未开启 custom logit processor」引起。"""
+    low = (message or "").lower()
+    return any(h in low for h in _UNSUPPORTED_PROCESSOR_HINTS)
+
+
 class SglangMusicClient(SongAnalysisClient):
     """调用 sglang 音乐理解服务的分析客户端（音频传本机路径）。
 
@@ -210,6 +225,9 @@ class SglangMusicClient(SongAnalysisClient):
         self.custom_logit_processor: Optional[str] = None
         if self.thinking_budget is not None:
             self.custom_logit_processor = resolve_thinking_processor(custom_logit_processor)
+        #: 是否真正向服务端下发 thinking budget；若服务端未开
+        #: ``--enable-custom-logit-processor`` 而被拒绝，会自动降级为 False。
+        self.thinking_budget_applied = self.thinking_budget is not None
 
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -228,6 +246,17 @@ class SglangMusicClient(SongAnalysisClient):
     # ------------------------------------------------------------------
     # 分析
     # ------------------------------------------------------------------
+    def _disable_thinking_budget(self, reason: str) -> None:
+        """服务端拒绝该字段时自动降级（只提示一次）。"""
+        if not self.thinking_budget_applied:
+            return
+        self.thinking_budget_applied = False
+        logger.warning(
+            "[sglang] 服务端未启用 custom logit processor，已自动降级为**不带 thinking budget**重试。"
+            "如需 budget 控制，请用 --enable-custom-logit-processor 启动服务端。原因: %s",
+            (reason or "")[:300],
+        )
+
     def analyze(self, audio_path: Path) -> dict[str, Any]:
         audio_path = Path(audio_path)
         if not audio_path.is_file():
@@ -259,6 +288,8 @@ class SglangMusicClient(SongAnalysisClient):
         }
         if reasoning:
             payload["reasoning"] = reasoning
+        if self.thinking_budget is not None:
+            payload["thinking_budget_applied"] = bool(self.thinking_budget_applied)
         styles = extract_styles_from_text(text)
         if styles:
             payload["styles"] = styles
@@ -305,12 +336,22 @@ class SglangMusicClient(SongAnalysisClient):
             "max_tokens": self.max_new_tokens,
             "temperature": self.temperature,
         }
-        if self.thinking_budget is not None:
+        if self.thinking_budget_applied:
             body["separate_reasoning"] = True
             body["custom_logit_processor"] = self.custom_logit_processor
             body["custom_params"] = {"thinking_budget": self.thinking_budget}
 
-        raw = self._post(self._url_chat, body, field_hint="choices[0].message.content")
+        try:
+            raw = self._post(self._url_chat, body, field_hint="choices[0].message.content")
+        except SongAnalysisError as exc:
+            # 服务端未用 --enable-custom-logit-processor 启动时会拒绝该字段。
+            # 这是服务端的安全开关，客户端无法绕过；自动降级为不带 budget 重试。
+            if not (self.thinking_budget_applied and _looks_like_unsupported_processor(str(exc))):
+                raise
+            self._disable_thinking_budget(str(exc))
+            for key in ("separate_reasoning", "custom_logit_processor", "custom_params"):
+                body.pop(key, None)
+            raw = self._post(self._url_chat, body, field_hint="choices[0].message.content")
         choices = raw.get("choices")
         if not isinstance(choices, list) or not choices:
             raise SongAnalysisError(f"sglang /v1/chat/completions 响应缺少 choices: {_preview(raw)}")

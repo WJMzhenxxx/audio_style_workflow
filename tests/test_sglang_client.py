@@ -248,6 +248,50 @@ def test_chat_mode_missing_choices(audio_file):
     assert "choices" in str(err.value)
 
 
+def test_chat_mode_auto_degrades_when_server_rejects_processor(audio_file):
+    """服务端未开 --enable-custom-logit-processor 时，自动去掉 budget 字段重试。"""
+    calls = []
+
+    def handler(request):
+        body = json.loads(request.content.decode("utf-8"))
+        calls.append(body)
+        if "custom_logit_processor" in body:
+            return httpx.Response(
+                400, json={"detail": "The server does not support custom logit processor"}
+            )
+        return httpx.Response(200, json={"choices": [{"message": {"content": "Jazz\nok"}}]})
+
+    transport = httpx.MockTransport(handler)
+    client = SglangMusicClient(
+        api_mode="chat", thinking_budget=50,
+        custom_logit_processor=VALID_PROCESSOR, transport=transport,
+    )
+    payload = client.analyze(audio_file)
+
+    assert len(calls) == 2, calls
+    assert "custom_logit_processor" in calls[0] and "custom_params" in calls[0]
+    assert "custom_logit_processor" not in calls[1]
+    assert "separate_reasoning" not in calls[1]
+    assert client.thinking_budget_applied is False
+    assert payload["thinking_budget_applied"] is False
+    assert payload["styles"] == ["Jazz"]
+
+    # 之后不再带着被拒字段重试
+    client.analyze(audio_file)
+    assert "custom_logit_processor" not in calls[-1]
+
+
+def test_chat_mode_unrelated_error_is_not_degraded(audio_file):
+    transport = RecordingTransport({"detail": "CUDA out of memory"}, status_code=500)
+    client = SglangMusicClient(
+        api_mode="chat", thinking_budget=50,
+        custom_logit_processor=VALID_PROCESSOR, transport=transport,
+    )
+    with pytest.raises(SongAnalysisError):
+        client.analyze(audio_file)
+    assert client.thinking_budget_applied is True
+
+
 def test_chat_mode_empty_content(audio_file):
     transport = RecordingTransport({"choices": [{"message": {"content": ""}}]})
     client = SglangMusicClient(api_mode="chat", transport=transport)
