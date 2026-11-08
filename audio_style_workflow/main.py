@@ -65,6 +65,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="--sglang-clip 的截取位置：middle=中间窗口（默认）；start=从头")
     client.add_argument("--sglang-audio-base64", action="store_true",
                         help="把音频以 data URL（base64）内联进请求，无需共享文件系统（体积增大约 33%%）")
+    client.add_argument("--temperature", type=float, default=0.0,
+                        help="采样温度；官方 demo/infer.py 用 1.0（sampling），0=贪心（可复现）")
+    client.add_argument("--top-p", type=float, default=None, help="nucleus 采样（官方 0.8~1.0）")
+    client.add_argument("--top-k", type=int, default=None, help="top-k 采样（官方 50）")
     client.add_argument("--prompt-lang", choices=["zh", "en"], default="zh",
                         help="分析 prompt 的语言，从而决定模型用什么语言输出（默认 zh）")
     client.add_argument("--model-id", default=os.environ.get("SONG_ANALYZER_MODEL_ID", "nvidia/music-flamingo-2601-hf"), help="本地 MusicFlamingo 模型 ID（配合 --local）")
@@ -138,6 +142,9 @@ def build_client(args: argparse.Namespace):
             prompt=prompt,
             thinking_budget=args.sglang_thinking_budget,
             max_new_tokens=args.max_new_tokens,
+            temperature=getattr(args, "temperature", 0.0),
+            top_p=getattr(args, "top_p", None),
+            top_k=getattr(args, "top_k", None),
             custom_logit_processor=args.sglang_custom_logit_processor,
             audio_path_map=parse_path_maps(args.sglang_path_map),
             audio_base64=getattr(args, "sglang_audio_base64", False),

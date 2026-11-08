@@ -245,6 +245,8 @@ class SglangMusicClient(SongAnalysisClient):
         prompt: str = DEFAULT_ANALYSIS_PROMPT,
         max_new_tokens: int = 1024,
         temperature: float = 0.0,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
         api_key: Optional[str] = None,
         model_name: str = "default",
         thinking_budget: Optional[int] = None,
@@ -269,6 +271,9 @@ class SglangMusicClient(SongAnalysisClient):
         self.prompt = prompt or DEFAULT_ANALYSIS_PROMPT
         self.max_new_tokens = int(max_new_tokens)
         self.temperature = float(temperature)
+        #: 官方 demo/infer.py 用 sampling（T=1.0, top_p=0.8~1.0, top_k=50）
+        self.top_p = float(top_p) if top_p is not None else None
+        self.top_k = int(top_k) if top_k is not None else None
         self.model_name = model_name
         self.thinking_budget = int(thinking_budget) if thinking_budget is not None else None
         # thinking_budget 需要合法的 processor 序列化串；解析/校验失败立即报错，
@@ -552,6 +557,10 @@ class SglangMusicClient(SongAnalysisClient):
             "max_new_tokens": self.max_new_tokens,
             "temperature": self.temperature,
         }
+        if self.top_p is not None:
+            sampling["top_p"] = self.top_p
+        if self.top_k is not None:
+            sampling["top_k"] = self.top_k
         body: dict[str, Any] = {
             "text": self.prompt,
             "audio_data": audio_url,

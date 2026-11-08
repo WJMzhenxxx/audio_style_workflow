@@ -703,3 +703,21 @@ def test_clip_audio_payload(tmp_path):
     # 关掉截取则应发原始文件
     plain = SglangMusicClient(api_mode="generate", audio_base64=True)
     assert plain._audio_payload(src).startswith("data:audio/mpeg;base64,")
+
+
+def test_sampling_params_passed(audio_file):
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content.decode("utf-8")))
+        return httpx.Response(200, json={"text": "TAGS: Pop\nBPM: 100",
+                                         "meta_info": {"prompt_tokens": 900}})
+
+    client = SglangMusicClient(
+        audio_base64=True, temperature=1.0, top_p=0.8, top_k=50,
+        transport=httpx.MockTransport(handler),
+    )
+    client.analyze(audio_file)
+    sampling = calls[0]["sampling_params"]
+    assert sampling["temperature"] == 1.0
+    assert sampling["top_p"] == 0.8 and sampling["top_k"] == 50

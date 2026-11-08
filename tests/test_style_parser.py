@@ -301,3 +301,26 @@ def test_prompts_do_not_anchor_on_specific_scenes():
         for scene in ("k-pop", "kpop", "city pop", "j-pop", "mandopop"):
             assert scene not in lowered, (lang, scene)
         assert "1-3" in prompt          # 限制标签数量，避免凑数
+
+
+def test_styles_from_tags_line_after_description():
+    """描述在前、TAGS 摘要在后：必须能取到标签行。"""
+    from audio_style_workflow.style_parser import extract_styles_from_text
+
+    text = (
+        "这是一首明亮的中速电子流行曲，合成器铺底与女声交织。\n"
+        "TAGS: Dance-Pop, Synth-Pop\n"
+        "BPM: 124\n"
+    )
+    assert extract_styles_from_text(text) == ["Dance-Pop", "Synth-Pop"]
+    # 中文标签行同样支持
+    assert extract_styles_from_text("描述……\n风格标签：Dream Pop，Synth-Pop") == ["Dream Pop", "Synth-Pop"]
+
+
+def test_prompt_is_description_first():
+    """对齐官方用法：先描述再摘要，而不是第一行就压标签。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    zh = get_analysis_prompt("zh")
+    assert zh.index("描述") < zh.index("TAGS:")
+    assert "风格与速度" in zh          # 沿用官方 demo 的提问维度

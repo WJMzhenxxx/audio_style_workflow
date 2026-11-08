@@ -43,38 +43,37 @@ _MAX_STYLES = 8
 # ======================================================================
 #: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
-    "Listen to this track and analyze it. Reply in this exact format:\n"
-    "Line 1: its musical styles/subgenres, comma-separated, 1-3 items, "
-    "most specific first (e.g. Synth-Pop, Indie Rock, Lo-Fi). List only styles you "
-    "can justify from what you actually hear in the audio; do NOT infer the "
-    "artist's country, label or industry scene. Do not pad the list to sound thorough.\n"
-    "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
-    "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
-    "Line 4: Key: <key signature, e.g. C major / A minor>\n"
-    "Line 5: Mood: <one or two mood/atmosphere words, e.g. Warm, Dreamy, Melancholic>\n"
-    "Line 6: Score: <integer 0-10 rating, 10 being best>\n"
-    "Line 7: Review: <one sentence overall review>\n"
-    "Line 8: Why: <one or two sentences explaining why these styles fit this track>\n"
-    "Then leave one blank line and describe in detail the genre, instruments, "
-    "production style and the overall mood it creates."
+    "Analyze this music.\n"
+    "Part 1: describe it in detail covering style and tempo, key and harmony, "
+    "instrumentation, structure, and overall mood (at least 120 words).\n"
+    "Part 2: after the description, output a summary block in exactly this format, "
+    "with no extra commentary:\n"
+    "TAGS: <1-3 English genre tags, comma-separated, most specific first>\n"
+    "BPM: <integer beats per minute, e.g. 120>\n"
+    "Tempo: <short English tempo word, e.g. Slow / Moderato / Fast>\n"
+    "Key: <key signature, e.g. C major / A minor>\n"
+    "Mood: <1-2 mood words>\n"
+    "Score: <integer 0-10, 10 being best>\n"
+    "Review: <one sentence overall review>\n"
+    "Why: <one or two sentences explaining why these styles fit>"
 )
 
-#: 中文版 prompt：风格名 / Tempo / Key 保持英文，Mood 与 Why 及正文用中文。
-#: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
+#: 中文版 prompt：先按官方推荐的"多维度自由描述"，再输出一行机器可读摘要。
+#: 官方 demo / infer.py 都是自由描述（captioning 才是模型强项），直接要标签列表
+#: 会让模型"硬挤"一个大类词，跨 prompt 版本还会漂移。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请聆听这段音频并分析。严格按下面 8 行输出，不要加任何多余前缀：\n"
-    "<风格标签，用英文书写，逗号分隔，1-3 个，最具体的放最前；"
-    "只写你能从音频本身听出来的风格，不要根据艺人产地、厂牌或产业背景推测，"
-    "也不要为了显得全面而凑数量>\n"
-    "BPM: <每分钟节拍数，整数，例如 120>\n"
-    "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
-    "Key: <调性，用英文，例如 C major / A minor>\n"
-    "Mood: <用中文写一两个词描述氛围，例如 温暖, 舒缓, 忧郁, 空灵>\n"
-    "Score: <0-10 的整数评分，10 为最佳>\n"
-    "Review: <用中文写一句话总体评价这首歌>\n"
-    "Why: <用中文写一两句话，说明为什么判定为这些风格>\n"
-    "然后空一行，用中文详细描述曲风、配器、制作与整体情绪；"
-    "描述里提到风格名、速度术语、调性时仍保留英文原词。"
+    "请分析这段音乐。\n"
+    "第一部分：从风格与速度、调性与和声、乐器编配、结构安排以及整体情绪这几个方面，"
+    "用中文详细描述（150 字以上）。\n"
+    "第二部分：在描述之后另起一行，严格按下面格式输出摘要，不要加任何多余说明：\n"
+    "TAGS: <英文流派标签，逗号分隔，1-3 个，最具体的放最前>\n"
+    "BPM: <每分钟节拍数整数，例如 120>\n"
+    "Tempo: <英文速度词，例如 Slow / Moderato / Fast>\n"
+    "Key: <英文调性，例如 C major / A minor>\n"
+    "Mood: <中文氛围词，1-2 个，例如 温暖, 舒缓>\n"
+    "Score: <0-10 整数评分，10 为最佳>\n"
+    "Review: <用中文写一句话总体评价>\n"
+    "Why: <用中文写一两句话，说明为什么判定为这些风格>"
 )
 
 #: 语言 -> prompt 模板
@@ -184,6 +183,32 @@ def _strip_instruction_echo(line: str) -> str:
     return line
 
 
+#: 摘要区里的标签行（可出现在任意行，而不只是第一行）
+_TAGS_LABEL_LINE_RE = re.compile(
+    r"^\s*(?:tags?|genres?|styles?|风格标签|风格|标签|流派|曲风)\s*[:：]\s*(.+)$",
+    re.IGNORECASE,
+)
+
+
+def _parse_labels(segment: str, *, limit: int) -> list[str]:
+    """把 ``Pop, R&B, Jazz`` 这类片段切成规范化标签列表。"""
+    labels: list[str] = []
+    for raw in _SPLIT_RE.split(segment):
+        label = _TRAILING_PUNCT_RE.sub("", raw.strip().strip('"“”（）()<>').strip())
+        if not label:
+            continue
+        if _INSTRUCTIONY_RE.search(label):
+            continue
+        if len(label) > _MAX_LABEL_LEN or len(label.split()) > _MAX_LABEL_WORDS:
+            return []
+        label = normalize_genre(label)
+        if label not in labels:
+            labels.append(label)
+    if not (1 <= len(labels) <= _MAX_LABELS):
+        return []
+    return labels[:limit]
+
+
 def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str]:
     """从生成式模型输出的第一行提取风格标签（确定性解析，无需 LLM）。
 
@@ -195,28 +220,22 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
     3. 每个标签长度须 <= 48 字符、词数 <= 4（排除被误拆的完整句子）；
     4. 标签数为 1~8 才可信（过长通常是普通描述句）。
     """
+    # 1) 优先取「描述后摘要」里的标签行（TAGS: / 风格标签: / Genres: …）
+    for raw_line in text.splitlines():
+        match = _TAGS_LABEL_LINE_RE.match(_clean_meta_line(raw_line))
+        if not match:
+            continue
+        labels = _parse_labels(match.group(1), limit=limit)
+        if labels:
+            return labels
+
+    # 2) 回退：取第一行（兼容"第一行就是标签"的模型/端点）
     first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
     if not first_line:
         return []
     first_line = _PREFIX_RE.sub("", first_line)
     first_line = _strip_instruction_echo(first_line)
-
-    labels: list[str] = []
-    for raw in _SPLIT_RE.split(first_line):
-        label = _TRAILING_PUNCT_RE.sub("", raw.strip().strip('"“”（）()').strip())
-        if not label:
-            continue
-        # 回声的说明文字（"只写风格标签" / "comma-separated" 等）直接丢弃
-        if _INSTRUCTIONY_RE.search(label):
-            continue
-        if len(label) > _MAX_LABEL_LEN or len(label.split()) > _MAX_LABEL_WORDS:
-            return []  # 超长/多词片段 -> 整行大概率是描述句，放弃
-        label = normalize_genre(label)
-        if label not in labels:
-            labels.append(label)
-    if not (1 <= len(labels) <= _MAX_LABELS):
-        return []
-    return labels[:limit]
+    return _parse_labels(first_line, limit=limit)
 
 
 # ----------------------------------------------------------------------

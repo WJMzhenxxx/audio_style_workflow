@@ -306,6 +306,29 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --per-song --state-flush-every 1
 ```
 
+### prompt 与官方用法的对齐
+
+参考官方仓库（`infer.py` / `app.py` / `README_zh.md`）后修正了两处偏离：
+
+| 项 | 官方做法 | 我们之前 | 现在 |
+| --- | --- | --- | --- |
+| 提问方式 | 自由描述：「请从风格与速度、调性与和声、乐器编配、结构安排以及整体情绪几个方面描述这段音乐」 | 强制 8 行结构化，第一行就要英文流派列表 | **先详细描述，再另起一行输出摘要块**（`TAGS:` / `BPM:` / …） |
+| 解码 | `temperature=1.0, top_p=0.8~1.0, top_k=50`（sampling） | `temperature=0.0`（贪心） | 可配 `--temperature / --top-p / --top-k`，默认仍 0.0（可复现） |
+
+原因：README 明确写的是「**音乐描述与标签**：用自然语言刻画情绪、风格、配器……」，
+评测（SDD Genre 4.84）也是 **captioning**。模型擅长散文式描述，强行让它第一行吐
+规范化标签列表，会导致"硬挤一个大类词"，且跨 prompt 版本漂移（同一首 `Golden.flac`
+上一版是 `Electropop/Dance-pop/Synth-pop`，下一版变成 `Progressive House/Trance`，
+而 BPM/Key 一直稳定）。
+
+```bash
+# 想要更接近官方 demo 的效果（引入随机性，标签可能每次略有不同）
+--temperature 1.0 --top-p 0.8 --top-k 50
+
+# 默认仍是可复现的贪心
+--temperature 0
+```
+
 ### 提高识别准确率（子流派识别不准时）
 
 #### 实测：整首音频是被完整摄入的，没有截断
@@ -316,31 +339,28 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 | 04 - Golden.flac 整首 | 194.6s | 2772 | 2667 | 13.7 t/s |
 | Aphonia.mp3 整首 | 362.7s | 5126 | 5021 | 13.8 t/s |
 
-（文本 prompt 约 105 token，已扣除。）三者严格线性 ≈13.6 token/秒，
-**说明模型完整"听"了整首歌，不存在只取前几十秒的情况**。
+（文本 prompt 约 105 token，已扣除。）与 README 中「MOSS-Audio-Encoder 编码为
+**12.5 Hz** 表征」吻合，**说明模型完整"听"了整首歌**。
 
 因此 `--sglang-clip` **只用于降低请求体积**（60s 约 2.5MB vs 整首 57.7MB），
-不要指望它提升准确率——实测截取 30 秒后同一首歌的标签完全变样
-（`Aphonia` 整首是 Dream Pop/Ambient Pop/Synth Pop，前 30 秒却成了
-ambient/new age/film score）。
+不要指望它提升准确率——实测截取 30 秒后同一首歌的标签完全变样。
 
-#### 那判不准是为什么
+#### 判不准的原因与对策
 
-模型是**按声音的生产特征**打标签，而不是按地域/文化场景。例如
-`04 - Golden.flac`（K-Pop）整首听完给出的是：
-
-> Electropop, Dance-pop, Synth-pop — BPM 124, G major
-
-从制作听感上说没错，但模型没有"这是 K-Pop 场景"这一层知识。
-应对手段按有效性排序：
+模型按**声音特征**打标，缺少"地域/产业场景"先验（`Golden.flac` 听完整首给出
+`Progressive House, Trance`，而不是 K-Pop）。按有效性排序：
 
 | 手段 | 说明 | 成本 |
 | --- | --- | --- |
-| **场景复核（推荐）** | 二段式：第二轮专门问「这首歌是否属于 K-Pop / J-Pop / Mandopop / City Pop 等场景？逐个回答是/否 + 理由」，比开放生成更容易命中 | 每首 +1 次调用 |
-| 多采样投票 | `temperature>0` 跑 N 次取多数；当前 `temperature=0.0` 是最保守的贪心解码 | N 倍 |
-| prompt 示例 | **坑**：示例里点名 `K-Pop` 会让模型对每首都输出 K-Pop（实测全库都被标成 K-Pop）。现在示例只保留音色类流派（Synth-Pop / Indie Rock / Lo-Fi），并明确要求「只写能听出来的风格，不要推测产地/厂牌/产业背景」，标签数限制 1-3 | 0 |
+| 官方描述式 prompt | 先描述再摘要，已内置 | 0 |
+| 采样 + 多投票 | `--temperature 0.6` 跑 N 次取多数，能压住跨次漂移 | N 倍 |
+| 场景复核 | 二段式：专门问「是否属于 K-Pop 场景」逐个是/否 | 每首 +1 次 |
 | 别名归一化 | `kpop`/`韩流` → `K-Pop`，`citypop` → `City Pop` 等 | 0 |
-| 换更大/更懂文化的模型 | 8B 模型对地域性流派本就偏弱 | 换硬件 |
+| 换更大/更懂文化的模型 | 8B 对地域性流派本就偏弱 | 换硬件 |
+
+> 反例记录：曾在 prompt 示例里点名 `K-Pop`/`City Pop`，结果全库都被标成 K-Pop
+> （"偶像团体制作、说唱段落、EDM drop"几乎等于 K-pop 判别口诀）。**不要在示例里
+> 点名具体场景流派**，会让模型对每首都套用。
 
 ### 中断后怎么续跑
 
