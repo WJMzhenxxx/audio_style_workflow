@@ -289,3 +289,15 @@ def test_genre_alias_normalization():
     assert normalize_genre("Rnb") == "R&B"
     assert normalize_genre("Dream Pop") == "Dream Pop"
     assert extract_styles_from_text("kpop, Citypop, rnb") == ["K-Pop", "City Pop", "R&B"]
+
+
+def test_prompts_do_not_anchor_on_specific_scenes():
+    """回归：曾在示例里点名 K-Pop，导致模型对每首都输出 K-Pop。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    for lang in ("zh", "en"):
+        prompt = get_analysis_prompt(lang)
+        lowered = prompt.lower()
+        for scene in ("k-pop", "kpop", "city pop", "j-pop", "mandopop"):
+            assert scene not in lowered, (lang, scene)
+        assert "1-3" in prompt          # 限制标签数量，避免凑数

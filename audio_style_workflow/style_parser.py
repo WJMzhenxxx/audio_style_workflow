@@ -44,10 +44,10 @@ _MAX_STYLES = 8
 #: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
     "Listen to this track and analyze it. Reply in this exact format:\n"
-    "Line 1: its musical styles/subgenres, comma-separated, MOST SPECIFIC FIRST, "
-    "up to 5 (e.g. K-Pop, City Pop, J-Pop, Neo-Soul, Dream Pop). Avoid a bare "
-    "'Pop'/'Rock' when a more specific subgenre fits; consider vocal language, "
-    "idol-group production, rap breaks and EDM drops.\n"
+    "Line 1: its musical styles/subgenres, comma-separated, 1-3 items, "
+    "most specific first (e.g. Synth-Pop, Indie Rock, Lo-Fi). List only styles you "
+    "can justify from what you actually hear in the audio; do NOT infer the "
+    "artist's country, label or industry scene. Do not pad the list to sound thorough.\n"
     "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
     "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
     "Line 4: Key: <key signature, e.g. C major / A minor>\n"
@@ -63,9 +63,9 @@ DEFAULT_ANALYSIS_PROMPT = (
 #: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
     "请聆听这段音频并分析。严格按下面 8 行输出，不要加任何多余前缀：\n"
-    "<风格/子流派标签，用英文书写，逗号分隔，最多 5 个，**最具体的放最前**；"
-    "例如 K-Pop, City Pop, J-Pop, Neo-Soul, Dream Pop。若可判断更细的子流派，"
-    "不要只写笼统的 Pop/Rock；可参考演唱语言、偶像团体制作、说唱段落、EDM drop 等线索>\n"
+    "<风格标签，用英文书写，逗号分隔，1-3 个，最具体的放最前；"
+    "只写你能从音频本身听出来的风格，不要根据艺人产地、厂牌或产业背景推测，"
+    "也不要为了显得全面而凑数量>\n"
     "BPM: <每分钟节拍数，整数，例如 120>\n"
     "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
     "Key: <调性，用英文，例如 C major / A minor>\n"
