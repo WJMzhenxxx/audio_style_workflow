@@ -282,23 +282,35 @@ log/
 }
 ```
 
-- `Genre description/*.txt`：每首歌的**完整评价**（人类可读），直接把模型输出落盘：
+- `Genre description/*.txt`：每首歌的**完整评价**（人类可读），分两节：
 
   ```text
   歌曲: Aphonia.mp3
   路径: C:\music\Aphonia.mp3
   风格: Pop, R&B
-  来源: reasoning_content
+  BPM: 118
+  Tempo: Moderato
+  Key: C major
+  来源: content
   ============================================================
 
-  Genre: Pop, R&B
+  【为什么是这个风格】
 
-  Tempo: 慢板
+  中板律动与温暖和声是 R&B 的典型骨架。
+
+  ------------------------------------------------------------
+
+  【完整评价】
+
+  Genre: Pop, R&B
   ...
   ```
 
-  「来源」标明这段文字取自 `content` 还是 `reasoning_content`（thinking 未闭合时
-  答案落在后者）。文件名与 `details` 同名前缀，可直接对照原始请求/响应。
+  「为什么是这个风格」由 `extract_genre_rationale` 确定性解析：优先取带标签的
+  段落（`Why:` / `Reason:` / `理由：` / `依据：`…，可跨多行），没有标签时退化为
+  找同时含因果词（because/因为）与音乐要素词（style/vocal/节奏…）的句子；
+  解析不到就不输出该节。「来源」标明正文取自 `content` 还是 `reasoning_content`。
+  文件名与 `details` 同名前缀，可直接对照原始请求/响应。
 
 - 文件名由「歌名 + 绝对路径哈希」决定：同一首歌多次分析覆盖同一文件，并发安全；
 - 分析失败也会落一份明细（`error` 字段记录原因）；

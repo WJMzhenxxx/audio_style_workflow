@@ -287,3 +287,60 @@ def test_workflow_concurrent_details_all_written(tmp_path):
     # 每个文件都能正常解析（无写入撕裂）
     for f in files:
         json.loads(f.read_text(encoding="utf-8"))
+
+
+def test_recorder_description_has_rationale_section(tmp_path):
+    rec = AnalysisDetailRecorder(tmp_path / "log")
+    audio = tmp_path / "song.mp3"
+    audio.write_bytes(b"x")
+
+    target = rec.write_description(
+        audio,
+        description="Pop, R&B\n完整描述正文。",
+        styles=["Pop", "R&B"],
+        content_source="content",
+        bpm=118,
+        tempo="Moderato",
+        key="C major",
+        rationale="中板律动与温暖和声是 R&B 的典型骨架。",
+    )
+    text = target.read_text(encoding="utf-8")
+    assert "【为什么是这个风格】" in text
+    assert "中板律动与温暖和声是 R&B 的典型骨架。" in text
+    assert "【完整评价】" in text
+    assert "BPM: 118" in text and "Tempo: Moderato" in text and "Key: C major" in text
+    assert text.index("【为什么是这个风格】") < text.index("【完整评价】")
+
+
+def test_recorder_description_without_rationale_omits_section(tmp_path):
+    rec = AnalysisDetailRecorder(tmp_path / "log")
+    audio = tmp_path / "song2.mp3"
+    audio.write_bytes(b"x")
+    target = rec.write_description(audio, description="只有正文。", styles=["Pop"])
+    text = target.read_text(encoding="utf-8")
+    assert "【为什么是这个风格】" not in text
+    assert "【完整评价】" in text
+
+
+def test_workflow_writes_rationale_from_description(tmp_path):
+    from audio_style_workflow.api.base import SongAnalysisClient
+
+    music = tmp_path / "music"
+    music.mkdir()
+    (music / "a.mp3").write_bytes(b"ID3-x")
+
+    class C(SongAnalysisClient):
+        name = "c"
+
+        def analyze(self, audio_path):
+            return {
+                "status": "ok",
+                "styles": ["Pop"],
+                "description": "Pop\nWhy: 明亮的合成器与抓耳副歌带来流行感。\n\n正文。",
+                "bpm": 120,
+            }
+
+    run_workflow(C(), StyleParser(), WorkflowConfig(root=music, log_dir=tmp_path / "log"))
+    f = next((tmp_path / "log" / DESCRIPTION_DIR_NAME).glob("*.txt"))
+    text = f.read_text(encoding="utf-8")
+    assert "明亮的合成器与抓耳副歌带来流行感。" in text

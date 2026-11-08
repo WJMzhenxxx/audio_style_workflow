@@ -210,9 +210,14 @@ class AnalysisDetailRecorder:
         description: str,
         styles: Optional[list[str]] = None,
         content_source: Optional[str] = None,
+        bpm: Optional[int] = None,
+        tempo: Optional[str] = None,
+        key: Optional[str] = None,
+        rationale: Optional[str] = None,
     ) -> Optional[Path]:
         """把一首歌的完整评价（模型 description / reasoning_content）写成可读文本。
 
+        文本分为「为什么是这个风格」与「完整评价」两节；理由为空时不输出该节。
         内容为空时跳过（返回 ``None``）。文件名与 details 一一对应，便于对照。
         """
         text = (description or "").strip()
@@ -225,9 +230,21 @@ class AnalysisDetailRecorder:
         ]
         if styles:
             header.append(f"风格: {', '.join(styles)}")
+        if bpm is not None:
+            header.append(f"BPM: {bpm}")
+        if tempo:
+            header.append(f"Tempo: {tempo}")
+        if key:
+            header.append(f"Key: {key}")
         if content_source:
             header.append(f"来源: {content_source}")
-        body = "\n".join(header) + "\n" + "=" * 60 + "\n\n" + text + "\n"
+
+        sections = ["\n".join(header), "=" * 60]
+        rationale_text = (rationale or "").strip()
+        if rationale_text:
+            sections += ["【为什么是这个风格】", rationale_text, "-" * 60]
+        sections += ["【完整评价】", text]
+        body = "\n\n".join(sections) + "\n"
 
         target = self.description_path_for(audio)
         with self._lock:

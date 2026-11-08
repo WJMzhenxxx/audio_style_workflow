@@ -29,7 +29,12 @@ from .models import PipelineState, TrackTask, TtaAlbum
 from .scanner import scan_directory
 from .splitter import SplitError, TtaSplitter
 from .state_store import ScanStateStore
-from .style_parser import StyleParser, StyleParseError, extract_musical_meta
+from .style_parser import (
+    StyleParser,
+    StyleParseError,
+    extract_genre_rationale,
+    extract_musical_meta,
+)
 from .tagger import TaggerError, get_styles, write_extra_tags, write_styles
 
 logger = logging.getLogger(__name__)
@@ -344,6 +349,13 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
         if recorder is not None:
             description = _analysis_description(task.analysis)
             if description:
+                rationale = (
+                    task.analysis.get("genre_rationale")
+                    if isinstance(task.analysis, dict) else None
+                ) or extract_genre_rationale(description)
+                task.genre_rationale = rationale
+                if rationale:
+                    logger.info("[why] %s -> %s", task.path.name, rationale[:80])
                 try:
                     recorder.write_description(
                         task.path,
@@ -353,6 +365,10 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
                             task.analysis.get("content_source")
                             if isinstance(task.analysis, dict) else None
                         ),
+                        bpm=task.bpm,
+                        tempo=task.tempo,
+                        key=task.key,
+                        rationale=rationale,
                     )
                 except Exception as exc:  # 评价落盘失败不影响主流程
                     logger.warning("写入歌曲评价失败（%s）: %s", task.path.name, exc)

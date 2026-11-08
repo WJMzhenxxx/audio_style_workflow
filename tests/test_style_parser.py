@@ -7,6 +7,7 @@ from audio_style_workflow.style_parser import (
     StyleParser,
     _extract_confidence,
     _extract_styles,
+    extract_genre_rationale,
     extract_musical_meta,
 )
 
@@ -150,3 +151,38 @@ def test_meta_ignores_out_of_range_bpm():
 def test_meta_missing_returns_empty():
     assert extract_musical_meta("no metadata here") == {}
     assert extract_musical_meta("") == {}
+
+
+# ----------------------------------------------------------------------
+# 风格判定理由
+# ----------------------------------------------------------------------
+def test_rationale_labeled_line():
+    text = "Pop, R&B\nBPM: 120\nWhy: 中板律动配合温暖和声，贴近 R&B 的质感。"
+    assert extract_genre_rationale(text) == "中板律动配合温暖和声，贴近 R&B 的质感。"
+
+
+def test_rationale_multiline_block():
+    text = (
+        "Rock\n"
+        "Why: Distorted guitars and driving drums explain the genre.\n"
+        "Also the vocals are raw.\n"
+        "\n"
+        "Full description follows."
+    )
+    assert extract_genre_rationale(text) == (
+        "Distorted guitars and driving drums explain the genre. Also the vocals are raw."
+    )
+
+
+def test_rationale_chinese_label_and_causal_fallback():
+    assert extract_genre_rationale("Jazz\n理由：使用了 swing 节奏与即兴钢琴。") == (
+        "使用了 swing 节奏与即兴钢琴。"
+    )
+    assert extract_genre_rationale(
+        "This sounds like Pop because of the catchy chorus and bright synths."
+    ) == "This sounds like Pop because of the catchy chorus and bright synths."
+
+
+def test_rationale_missing_returns_none():
+    assert extract_genre_rationale("") is None
+    assert extract_genre_rationale("Tempo: Moderato\nKey: C major") is None

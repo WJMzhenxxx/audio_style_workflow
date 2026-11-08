@@ -58,6 +58,7 @@ import httpx
 
 from ..style_parser import (
     DEFAULT_ANALYSIS_PROMPT,
+    extract_genre_rationale,
     extract_musical_meta,
     extract_styles_from_text,
 )
@@ -365,6 +366,9 @@ class SglangMusicClient(SongAnalysisClient):
                 "可配置 --llm-model 让 StyleParser 用 LLM 兜底提取"
             )
         payload.update(extract_musical_meta(text))
+        rationale = extract_genre_rationale(text)
+        if rationale:
+            payload["genre_rationale"] = rationale
         return payload
 
     # ------------------------------------------------------------------

@@ -41,7 +41,7 @@ _MAX_STYLES = 8
 # ======================================================================
 # 本地/自托管生成式音乐模型（MusicFlamingo、sglang 部署模型等）共用辅助件
 # ======================================================================
-#: 引导模型把风格/速度/调性写在固定位置（便于确定性解析），后续输出完整描述
+#: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
     "Listen to this track and analyze it. Reply in this exact format:\n"
     "Line 1: its musical styles/genres as a short comma-separated list "
@@ -49,6 +49,7 @@ DEFAULT_ANALYSIS_PROMPT = (
     "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
     "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
     "Line 4: Key: <key signature, e.g. C major / A minor>\n"
+    "Line 5: Why: <one or two sentences explaining why these styles fit this track>\n"
     "Then leave one blank line and describe in detail the genre, instruments, "
     "production style and the overall mood it creates."
 )
@@ -225,6 +226,82 @@ def extract_musical_meta(text: str) -> dict[str, Any]:
     if key:
         result["key"] = key
     return result
+
+
+# ----------------------------------------------------------------------
+# 风格判定理由（"为什么是这个风格"）
+# ----------------------------------------------------------------------
+#: 理由字段的标签（中英文）
+_RATIONALE_LABEL_RE = re.compile(
+    r"^\s*(?:why|reasons?|rationale|justification|"
+    r"genre\s+rationale|style\s+rationale|"
+    r"为什么是这个风格|为什么是这种风格|风格理由|判定理由|理由|依据)\s*[:：]\s*(.*)$",
+    re.IGNORECASE,
+)
+#: 其它已知字段：遇到就说明理由块结束了
+_NEXT_FIELD_RE = re.compile(
+    r"^\s*(?:bpm|tempo|key|tonality|beats?\s*per\s*minute|速度|节奏|调性|调号)\s*[:：]",
+    re.IGNORECASE,
+)
+#: 启发式：含因果词、且像风格判断的句子
+_CAUSAL_RE = re.compile(
+    r"(because|since|due\s+to|which\s+is\s+why|as\s+it\s+(?:has|features|combines))"
+    r"|(因为|由于|之所以|原因是)",
+    re.IGNORECASE,
+)
+_GENRE_HINT_RE = re.compile(
+    r"(style|genre|风格|流派|节奏|旋律|配器|和声|嗓音|人声|"
+    r"vocal|beat|groove|harmon|synth|chorus|drum|guitar|piano|bass|melod|rhythm|instrument)",
+    re.IGNORECASE,
+)
+_MAX_RATIONALE_LEN = 600
+
+
+def extract_genre_rationale(text: str) -> Optional[str]:
+    """提取「为什么是这个风格」的理由文本。
+
+    优先取带标签的段落（``Why:`` / ``Reason:`` / ``理由：`` / ``依据：``…），
+    支持跨多行，直到空行或下一个已知字段（BPM/Tempo/Key）为止。
+    没有标签时退化为启发式：找第一句同时含因果词（because/因为…）与
+    音乐要素词（style/vocal/节奏…）的句子。
+    """
+    if not text:
+        return None
+
+    lines = text.splitlines()
+    collected: list[str] = []
+    for index, raw in enumerate(lines):
+        line = _clean_meta_line(raw)
+        match = _RATIONALE_LABEL_RE.match(line)
+        if not match:
+            continue
+        # 理由是一整句，不能像 key/tempo 那样剥掉句末标点
+        first = match.group(1).strip().strip("\"'“”‘’").strip()
+        if first:
+            collected.append(first)
+        # 继续收集后续行，直到空行/下一个字段/下一个标签
+        for follow in lines[index + 1:]:
+            candidate = _clean_meta_line(follow)
+            if not candidate:
+                break
+            if _NEXT_FIELD_RE.match(candidate) or _RATIONALE_LABEL_RE.match(candidate):
+                break
+            collected.append(candidate)
+        break
+
+    if collected:
+        rationale = " ".join(part for part in collected if part).strip()
+        if rationale:
+            return rationale[:_MAX_RATIONALE_LEN]
+
+    # 启发式兜底：按句切分，找同时含因果词与音乐要素的那句
+    for sentence in re.split(r"(?<=[.!?。！？])\s*|\n+", text):
+        candidate = sentence.strip()
+        if not candidate or len(candidate) > _MAX_RATIONALE_LEN:
+            continue
+        if _CAUSAL_RE.search(candidate) and _GENRE_HINT_RE.search(candidate):
+            return candidate[:_MAX_RATIONALE_LEN]
+    return None
 
 
 class StyleParseError(RuntimeError):
