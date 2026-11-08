@@ -631,7 +631,7 @@ def test_chat_without_audio_falls_back_to_generate(audio_file):
 
     assert calls == ["/v1/chat/completions", "/generate"]
     assert payload["api_mode"] == "generate"
-    assert payload["styles"] == ["Dream Pop", "Synth Pop"]
+    assert payload["styles"] == ["Dream Pop", "Synth-Pop"]
     assert payload["bpm"] == 100
     assert payload["key"] == "F# major"
     assert payload["prompt_tokens"] == 5126

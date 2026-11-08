@@ -38,13 +38,18 @@ _MIME = {
 }
 
 DEFAULT_PROMPT = (
-    "Listen to this track and analyze it. Reply in this exact format:\n"
-    "Line 1: its musical styles/genres as a short comma-separated list.\n"
-    "Line 2: BPM: <integer>\n"
-    "Line 3: Tempo: <descriptor>\n"
-    "Line 4: Key: <key signature>\n"
-    "Line 5: Why: <why these styles fit>\n"
-    "Then describe the genre, instruments and mood."
+    "请分析这段音乐。\n"
+    "第一部分：从风格与速度、调性与和声、乐器编配、结构安排以及整体情绪这几个方面，"
+    "用中文详细描述（150 字以上）。\n"
+    "第二部分：在描述之后另起一行，严格按下面格式输出摘要，不要加任何多余说明：\n"
+    "TAGS: <英文流派标签，逗号分隔，1-3 个，最具体的放最前>\n"
+    "BPM: <每分钟节拍数整数>\n"
+    "Tempo: <英文速度词，例如 Slow / Moderato / Fast>\n"
+    "Key: <英文调性，例如 C major / A minor>\n"
+    "Mood: <中文氛围词，1-2 个>\n"
+    "Score: <0-10 整数评分>\n"
+    "Review: <一句话总体评价>\n"
+    "Why: <用中文说明为什么判定为这些风格>"
 )
 
 

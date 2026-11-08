@@ -92,6 +92,14 @@ def get_analysis_prompt(lang: str = "en") -> str:
 
 #: 常见别名 -> 规范写法（子流派尤其容易写成多种形式）
 _GENRE_ALIASES = {
+    "poprock": "Pop-Rock", "pop rock": "Pop-Rock", "pop-rock": "Pop-Rock",
+    "electropop": "Electropop", "electro pop": "Electropop", "electro-pop": "Electropop",
+    "dancepop": "Dance-Pop", "dance pop": "Dance-Pop", "dance-pop": "Dance-Pop",
+    "synthpop": "Synth-Pop", "synth pop": "Synth-Pop", "synth-pop": "Synth-Pop",
+    "indierock": "Indie Rock", "indie rock": "Indie Rock",
+    "altrock": "Alt Rock", "alt rock": "Alt Rock", "alt-rock": "Alt Rock",
+    "progrock": "Prog Rock", "prog rock": "Prog Rock",
+    "idm": "IDM", "uk garage": "UK Garage", "uk drill": "UK Drill",
     "kpop": "K-Pop", "k-pop": "K-Pop", "k pop": "K-Pop", "korean pop": "K-Pop",
     "korean idol": "K-Pop", "케이팝": "K-Pop", "韩流": "K-Pop", "韩国流行": "K-Pop",
     "citypop": "City Pop", "city pop": "City Pop", "シティポップ": "City Pop",
@@ -114,11 +122,22 @@ _GENRE_ALIASES = {
 
 
 def normalize_genre(name: str) -> str:
-    """把常见别名/大小写变体规范成通行写法（``kpop`` -> ``K-Pop``）。"""
+    """把别名/大小写变体规范成通行写法。
+
+    先查别名表（``kpop`` -> ``K-Pop``、``poprock`` -> ``Pop-Rock``），
+    命中不了就统一成 Title Case（``progressive house`` -> ``Progressive House``、
+    ``rock`` -> ``Rock``），避免同一个流派出现大小写混杂。
+    """
     text = (name or "").strip()
     if not text:
         return text
-    return _GENRE_ALIASES.get(text.lower(), text)
+    alias = _GENRE_ALIASES.get(text.lower())
+    if alias:
+        return alias
+    # 全部大写的缩写（EDM/IDM）保持原样，其余统一 Title Case
+    if text.isupper() and len(text) <= 5:
+        return text
+    return text.title()
 
 
 #: 解析风格标签的启发式参数

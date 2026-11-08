@@ -193,9 +193,9 @@ def test_styles_strip_instruction_echo():
     from audio_style_workflow.style_parser import extract_styles_from_text
 
     text = "its musical styles/genres as a short comma-separated list: Dream Pop, Ambient Pop, Synth Pop\nBPM: 100"
-    assert extract_styles_from_text(text) == ["Dream Pop", "Ambient Pop", "Synth Pop"]
+    assert extract_styles_from_text(text) == ["Dream Pop", "Ambient Pop", "Synth-Pop"]
     # 短指令字段名也要剥掉
-    assert extract_styles_from_text("list: Dream Pop, Synth Pop") == ["Dream Pop", "Synth Pop"]
+    assert extract_styles_from_text("list: Dream Pop, Synth Pop") == ["Dream Pop", "Synth-Pop"]
 
     # 单字段（冒号前只有一两个词）不应被误切
     assert extract_styles_from_text("Pop, R&B, Jazz") == ["Pop", "R&B", "Jazz"]
@@ -324,3 +324,14 @@ def test_prompt_is_description_first():
     zh = get_analysis_prompt("zh")
     assert zh.index("描述") < zh.index("TAGS:")
     assert "风格与速度" in zh          # 沿用官方 demo 的提问维度
+
+
+def test_genre_case_and_concat_normalized():
+    """模型常输出小写/连写：统一成 Title Case 并把 poprock 合并成 Pop-Rock。"""
+    from audio_style_workflow.style_parser import extract_styles_from_text, normalize_genre
+
+    assert normalize_genre("poprock") == "Pop-Rock"
+    assert normalize_genre("rock") == "Rock"
+    assert normalize_genre("progressive house") == "Progressive House"
+    assert normalize_genre("EDM") == "EDM"          # 缩写保持大写
+    assert extract_styles_from_text("TAGS: poprock, rock, pop") == ["Pop-Rock", "Rock", "Pop"]
