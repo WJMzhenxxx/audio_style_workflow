@@ -68,6 +68,8 @@ class WorkflowConfig:
     write_musical_tags: bool = True
     #: 逐曲闭环：每首分析完立即解析并写标签/记扫描记录（默认 False = 分阶段批处理）
     per_song: bool = False
+    #: 扫描记录每累计多少条就落盘一次（0 = 只在结束时保存）
+    state_flush_every: int = 10
 
 
 @dataclass
@@ -458,6 +460,7 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
                 logger.info("[tag] %s <= %s", task.path.name, written)
             if store is not None:
                 store.mark_scanned(task.path, styles=task.styles)
+                store.save_if_due(config.state_flush_every)
             logger.info(
                 "[tag] %s <= %s=%r", task.path.name, config.custom_tag_key, task.would_write
             )
@@ -584,7 +587,17 @@ def run_workflow(
 
     workflow = build_workflow(client, style_parser, config, splitter=splitter, store=store)
     logger.info("LangChain 工作流启动: %s", " -> ".join(getattr(step, "name", "?") for step in workflow.steps))
-    final_state: PipelineState = workflow.invoke(None)
+    try:
+        final_state: PipelineState = workflow.invoke(None)
+    except BaseException:
+        # 中断（Ctrl+C / 异常）时把已完成的扫描记录落盘，重跑可 --skip-scanned 续跑
+        if store is not None and not config.dry_run:
+            try:
+                store.save()
+                logger.warning("[state] 已中断，仍保存了当前扫描记录（%d 项），重跑可续跑", store.size)
+            except OSError as exc:  # pragma: no cover - 落盘失败不掩盖原始异常
+                logger.warning("[state] 中断时保存扫描记录失败: %s", exc)
+        raise
     logger.info("工作流执行完毕")
 
     marked = 0

@@ -44,6 +44,8 @@ class ScanStateStore:
         self._path = Path(path) if path else self._root / DEFAULT_STATE_FILENAME
         self._entries: dict[str, dict[str, Any]] = {}
         self._dirty = False
+        #: 自上次落盘以来新增/更新的条目数（用于定期保存，避免中断丢进度）
+        self._since_save = 0
 
     # ------------------------------------------------------------------
     # 基本属性
@@ -98,6 +100,7 @@ class ScanStateStore:
                 os.unlink(tmp_name)
             raise
         self._dirty = False
+        self._since_save = 0
         logger.info("[state] 扫描记录已保存: %d 项 -> %s", len(self._entries), self._path)
 
     def reset(self) -> None:
@@ -166,6 +169,7 @@ class ScanStateStore:
             entry["styles"] = list(styles)
         self._entries[self._key(path)] = entry
         self._dirty = True
+        self._since_save += 1
 
     def mark_album(self, tta: Path, cue: Optional[Path]) -> None:
         """把一张整轨专辑记入状态（专辑所有分轨都成功后调用）。"""
@@ -181,6 +185,17 @@ class ScanStateStore:
     @property
     def dirty(self) -> bool:
         return self._dirty
+
+    def save_if_due(self, every: int) -> bool:
+        """每累计 ``every`` 条新记录就落盘一次（``every<=0`` 表示只在结束时保存）。
+
+        逐曲/分批写标签时定期落盘，进程被中断也只丢最后几条进度，
+        重跑用 ``--skip-scanned`` 即可续跑。
+        """
+        if every and every > 0 and self._since_save >= every:
+            self.save()
+            return True
+        return False
 
     # ------------------------------------------------------------------
     # 内部

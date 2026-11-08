@@ -81,6 +81,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     state.add_argument("--reset-state", action="store_true", help="运行前清空扫描记录（重新全量处理）")
     state.add_argument("--per-song", dest="per_song", action="store_true",
                        help="逐曲闭环：每首分析完立即解析并写标签、记扫描记录（默认先全部分析再统一写）")
+    state.add_argument("--state-flush-every", type=int, default=10, metavar="N",
+                       help="扫描记录每累计 N 条就落盘一次（0 = 只在结束时保存）；中断后可用 --skip-scanned 续跑")
 
     split = parser.add_argument_group("TTA 切分")
     split.add_argument("--split-dir", type=Path, default=None, help="分轨输出目录（默认与 TTA 整轨同目录）")
@@ -210,6 +212,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         log_dir=log_paths.root,
         write_musical_tags=getattr(args, "musical_tags", True),
         per_song=getattr(args, "per_song", False),
+        state_flush_every=max(0, getattr(args, "state_flush_every", 10)),
     )
 
     print(f"目标目录 : {config.root}")

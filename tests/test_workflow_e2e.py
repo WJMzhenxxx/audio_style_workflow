@@ -364,3 +364,41 @@ def test_per_song_tags_incrementally(library):
     # 每进入下一首时，已完成数量单调递增
     assert seen_counts == sorted(seen_counts)
     assert seen_counts[-1] >= 4
+
+
+def test_per_song_resume_after_interrupt(library):
+    """逐曲模式中途中断：扫描记录已落盘，重跑 --skip-scanned 可续跑。"""
+    import json
+
+    from audio_style_workflow.state_store import DEFAULT_STATE_FILENAME
+
+    state_file = library / DEFAULT_STATE_FILENAME
+
+    class Boom(MockSongAnalysisClient):
+        def __init__(self, limit):
+            super().__init__()
+            self.limit = limit
+            self.calls = 0
+
+        def analyze(self, audio_path):
+            self.calls += 1
+            if self.calls > self.limit:
+                raise KeyboardInterrupt("模拟中断")
+            return super().analyze(audio_path)
+
+    cfg = WorkflowConfig(
+        root=library, per_song=True, skip_scanned=True, state_flush_every=1,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        run_workflow(Boom(3), StyleParser(), cfg)
+
+    assert state_file.is_file(), "中断后扫描记录应已落盘"
+    saved = json.loads(state_file.read_text(encoding="utf-8"))["files"]
+    assert len(saved) >= 3, saved
+
+    report = run_workflow(
+        MockSongAnalysisClient(), StyleParser(),
+        WorkflowConfig(root=library, per_song=True, skip_scanned=True),
+    )
+    assert report.skipped_scanned >= 3
+    assert report.failed == []

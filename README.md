@@ -283,6 +283,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--llm-model` | 启用 LLM 兜底解析非结构化响应（需 `langchain-openai` + `OPENAI_API_KEY`） |
 | `--log-dir DIR` | 日志目录，默认 `log`（或环境变量 `SONG_ANALYZER_LOG_DIR`） |
 | `--per-song` | 逐曲闭环：每首分析完立即解析并写标签、记扫描记录 |
+| `--state-flush-every N` | 扫描记录每累计 N 条落盘一次，默认 10（0 = 只在结束时保存） |
 
 环境变量：`SONG_ANALYZER_ENDPOINT`、`SONG_ANALYZER_API_KEY`、
 `SONG_ANALYZER_FILE_FIELD`、`SONG_ANALYZER_LLM_MODEL`、`FFMPEG_PATH`、
@@ -293,14 +294,26 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | | 分阶段批处理（默认） | 逐曲闭环（`--per-song`） |
 | --- | --- | --- |
 | 顺序 | 先全部调用 MOSS → 再统一解析 → 再统一写标签 | 每首：分析 → 解析 → 写标签 → 记扫描记录 |
-| 中断后 | 已分析但未写标签的成果会丢，重跑需重新分析 | 已完成的歌曲都已落盘，重跑直接命中 `skip-scanned` |
+| 中断后 | 标签已写但扫描记录可能没落盘 → 建议配 `--skip-tagged` 续跑 | 标签与扫描记录都已落盘 → `--skip-scanned` 直接续跑 |
 | 全局视角 | 可先看全部分析结果再统一写 | 无法先汇总再决定 |
 | 并发 | `--concurrency` 在本阶段内并行 | 天然串行（忽略 `--concurrency`） |
 
 ```bash
 # 逐曲闭环，适合大批量、可能被打断的场景
 python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --per-song
+
+# 更保险：每首完成就落盘（中断最多丢当前这一首）
+python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --per-song --state-flush-every 1
 ```
+
+### 中断后怎么续跑
+
+| 跳过参数 | 中断后能否跳过已完成 |
+| --- | --- |
+| `--skip-scanned` | ✅ 能，**前提是扫描记录已落盘**。现在每累计 `--state-flush-every` 条（默认 10）落盘一次，且 Ctrl+C / 异常时会在 `finally` 里再落盘一次；只有被强杀（kill -9 / 断电）才会丢最后几条 |
+| `--skip-tagged` | ✅ 能，读的是音频里的标签。逐曲模式下每首写完即在盘上；分阶段批处理要等 `write_tags` 阶段，那时中断就没有 |
+
+推荐组合：`--per-song --skip-scanned`（时间敏感可再加 `--state-flush-every 1`）。
 
 ## 日志与逐曲分析明细
 

@@ -143,3 +143,29 @@ def test_state_file_excluded_from_scan(tmp_path):
     payload = json.loads((tmp_path / DEFAULT_STATE_FILENAME).read_text(encoding="utf-8"))
     assert payload["version"] == 1
     assert set(payload["files"].keys()) == {"rel:a.mp3"}
+
+
+def test_save_if_due_persists_progress(tmp_path):
+    """每累计 N 条就落盘，中断后重跑可续跑。"""
+    from audio_style_workflow.state_store import ScanStateStore
+
+    root = tmp_path
+    files = []
+    for i in range(5):
+        f = root / f"s{i}.mp3"
+        f.write_bytes(b"x" * (10 + i))
+        files.append(f)
+
+    store = ScanStateStore(root)
+    store.mark_scanned(files[0])
+    assert store.save_if_due(2) is False          # 只累积了 1 条
+    store.mark_scanned(files[1])
+    assert store.save_if_due(2) is True           # 达到 2 条 -> 落盘
+
+    reloaded = ScanStateStore(root)
+    reloaded.load()
+    assert reloaded.size == 2
+
+    # every=0 表示只在结束时保存
+    store.mark_scanned(files[2])
+    assert store.save_if_due(0) is False
