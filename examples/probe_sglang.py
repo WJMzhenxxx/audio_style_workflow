@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import base64
 import json
 import sys
@@ -77,6 +78,8 @@ def _clip(path: Path, seconds: int, mode: str):
     if not ffmpeg:
         return None
     out_dir = Path(tempfile.mkdtemp(prefix="probe_clip_"))
+    # 进程退出时删掉临时目录，避免在仓库里留下 probe_clip_*
+    atexit.register(shutil.rmtree, out_dir, True)
     out = out_dir / "clip.wav"
     start = "0"
     if mode == "middle":
