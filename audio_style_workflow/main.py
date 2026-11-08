@@ -79,6 +79,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tags.add_argument("--custom-tag", default=DEFAULT_CUSTOM_KEY, help="自定义风格标签键名（FLAC: VorbisComment 字段 / MP3: TXXX 帧）")
     tags.add_argument("--joiner", default=DEFAULT_JOINER, help="多风格连接符")
     tags.add_argument("--skip-tagged", action="store_true", help="已含该自定义标签的歌曲跳过分析（依据文件内标签）")
+    tags.add_argument("--tempo-from-bpm", dest="tempo_from_bpm", action="store_true",
+                      help="用 BPM 换算 Tempo（Largo/Andante/Allegro…），忽略模型自报的速度词")
     tags.add_argument("--no-musical-tags", dest="musical_tags", action="store_false",
                       help="不写入 BPM/Tempo/Key 标签（默认写入：FLAC BPM/TEMPO/KEY；MP3 TBPM/TKEY/TXXX:TEMPO）")
     tags.add_argument("--dry-run", action="store_true", help="只分析并展示将写入的标签，不落盘")
@@ -227,6 +229,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         write_musical_tags=getattr(args, "musical_tags", True),
         per_song=getattr(args, "per_song", False),
         state_flush_every=max(0, getattr(args, "state_flush_every", 10)),
+        tempo_from_bpm=getattr(args, "tempo_from_bpm", False),
     )
 
     print(f"目标目录 : {config.root}")

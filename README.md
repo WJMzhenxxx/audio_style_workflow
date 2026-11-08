@@ -329,6 +329,39 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 --temperature 0
 ```
 
+### 两种解码模式的取舍（实测）
+
+同一批 9 首歌，`temperature=0`（贪心）与 `temperature=1.0, top_p=0.8, top_k=50`（官方 demo 设置）对比：
+
+| 曲目 | greedy BPM | T=1.0 BPM | Δ |
+| --- | ---: | ---: | ---: |
+| Aphonia | 100 | 136 | **+36** |
+| What a Night | 100 | 135 | **+35** |
+| Pictures | 128 | 143 | +15 |
+| Silver Lining | 136 | 150 | +14 |
+| Now and Never | 122 | 130 | +8 |
+| River of Light | 132 | 137 | +5 |
+| Golden | 125 | 127 | +2 |
+| 日落潮汐 | 124 | 120 | -4 |
+
+结论：
+
+- **数值型字段（BPM/Key）用贪心更稳**，采样会让 BPM 跳动 10~35；
+- 采样的好处是描述更自然、标签更"泛化"（`Pop/Electronic/Dance`），
+  贪心更容易给出具体子流派（`Progressive House/Trance`）；
+- 想准 → 保持默认 `--temperature 0`；想要更丰富的描述 → 用 0.3~0.5 折中。
+
+另：模型自报的 `Tempo` 词常与 BPM 矛盾（136 BPM 却说 `Moderato`）。
+加 `--tempo-from-bpm` 可按 BPM 换算成 `Largo/Adagio/Andante/Moderato/Allegro/Vivace/Presto`。
+
+### 模型偶尔不输出 TAGS 摘要行
+
+描述式 prompt 下，模型偶尔只写描述、漏掉 `TAGS:` 行（实测 9 首出现 1 次）。现在依次兜底：
+
+1. 找 `TAGS:` / `风格标签:` 行；
+2. 第一行若是"标签样"（无句末标点、片段短）才当标签；
+3. 否则**从描述里扫流派词**（`Trance`、`House`、`流行`…），并打 warning。
+
 ### 提高识别准确率（子流派识别不准时）
 
 #### 实测：整首音频是被完整摄入的，没有截断

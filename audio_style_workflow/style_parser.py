@@ -121,6 +121,67 @@ _GENRE_ALIASES = {
 }
 
 
+#: 拆分连写流派用的词素（progressivehouse -> progressive + house）
+_GENRE_WORDS = {
+    "progressive", "house", "trance", "techno", "ambient", "pop", "rock", "synth",
+    "dance", "indie", "melodic", "vocal", "electro", "tech", "deep", "drum",
+    "bass", "jazz", "metal", "soul", "funk", "disco", "city", "dream", "folk",
+    "classical", "acoustic", "alternative", "alt", "punk", "gospel", "world",
+    "urban", "chill", "lounge", "smooth", "trip", "hop", "hip", "lo", "fi",
+    "neo", "hard", "soft", "light", "dark", "wave", "core", "pop", "rnb",
+}
+
+#: 从描述文本里兜底识别流派时使用的词表（按长度倒序，优先匹配长词）
+_GENRE_TERMS: tuple[str, ...] = (
+    "progressive house", "progressive trance", "melodic house", "melodic trance",
+    "vocal trance", "vocal house", "bass house", "electro house", "deep house",
+    "tech house", "drum & bass", "drum and bass", "city pop", "dream pop",
+    "synth-pop", "synth pop", "synthpop", "electropop", "dance-pop", "dance pop",
+    "indie pop", "indie rock", "pop rock", "pop-rock", "alt rock", "art pop",
+    "bedroom pop", "trip hop", "trip-hop", "lo-fi", "lofi", "hip-hop", "hip hop",
+    "r&b", "rnb", "neo-soul", "new age", "film score", "soundtrack", "orchestral",
+    "house", "trance", "techno", "ambient", "electronic", "edm", "dubstep",
+    "disco", "funk", "soul", "jazz", "blues", "classical", "baroque", "romantic",
+    "ballad", "acoustic", "folk", "country", "metal", "punk", "rock", "pop",
+    "cinematic", "instrumental", "chillout", "lounge",
+    "流行", "摇滚", "爵士", "古典", "民谣", "电子", "说唱", "嘻哈", "灵魂",
+    "放克", "迪斯科", "氛围", "器乐", "新世纪", "原声",
+)
+
+
+def _split_concatenated(word: str) -> Optional[str]:
+    """把 ``progressivehouse`` 这类连写拆成 ``Progressive House``。"""
+    low = word.lower()
+    parts: list[str] = []
+    index = 0
+    while index < len(low):
+        for end in range(len(low), index, -1):
+            if low[index:end] in _GENRE_WORDS:
+                parts.append(low[index:end])
+                index = end
+                break
+        else:
+            return None
+    if len(parts) >= 2:
+        return " ".join(part.capitalize() for part in parts)
+    return None
+
+
+def _scan_genre_terms(text: str) -> list[str]:
+    """从自然语言描述里找出提到的流派（兜底用）。"""
+    lowered = (text or "").lower()
+    found: list[str] = []
+    for term in _GENRE_TERMS:
+        if term not in lowered:
+            continue
+        canon = normalize_genre(term)
+        if canon and canon not in found:
+            found.append(canon)
+        if len(found) >= 3:
+            break
+    return found
+
+
 def normalize_genre(name: str) -> str:
     """把别名/大小写变体规范成通行写法。
 
@@ -134,9 +195,14 @@ def normalize_genre(name: str) -> str:
     alias = _GENRE_ALIASES.get(text.lower())
     if alias:
         return alias
-    # 全部大写的缩写（EDM/IDM）保持原样，其余统一 Title Case
+    # 全部大写的缩写（EDM/IDM）保持原样
     if text.isupper() and len(text) <= 5:
         return text
+    # 连写形式（progressivehouse / ambientpop）拆成单词
+    if " " not in text and "-" not in text and text.isalpha():
+        split = _split_concatenated(text)
+        if split:
+            return split
     return text.title()
 
 
@@ -209,6 +275,23 @@ _TAGS_LABEL_LINE_RE = re.compile(
 )
 
 
+def _looks_like_tag_line(line: str) -> bool:
+    """判断一行是否像「标签列表」而不是散文句子。
+
+    中文散文按逗号切出来的片段往往很短，容易骗过长度检查（例如
+    ``这是一首典型的渐进式Trance作品，融合了…``），因此这里额外要求：
+    没有句末标点、片段不过长、片段数在范围内。
+    """
+    if not line or len(line) > 140:
+        return False
+    if re.search(r"[。！？!?]", line):
+        return False
+    parts = [part.strip() for part in _SPLIT_RE.split(line) if part.strip()]
+    if not (1 <= len(parts) <= _MAX_LABELS):
+        return False
+    return all(len(part) <= 24 for part in parts)
+
+
 def _parse_labels(segment: str, *, limit: int) -> list[str]:
     """把 ``Pop, R&B, Jazz`` 这类片段切成规范化标签列表。"""
     labels: list[str] = []
@@ -254,7 +337,18 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
         return []
     first_line = _PREFIX_RE.sub("", first_line)
     first_line = _strip_instruction_echo(first_line)
-    return _parse_labels(first_line, limit=limit)
+    if _looks_like_tag_line(first_line):
+        labels = _parse_labels(first_line, limit=limit)
+        if labels:
+            return labels
+
+    # 3) 最后一招：模型只给了描述、没给摘要行 -> 从描述里扫流派词
+    scanned = _scan_genre_terms(text)
+    if scanned:
+        logger.warning(
+            "[styles] 模型未输出 TAGS 摘要行，已从描述中兜底提取: %s", scanned
+        )
+    return scanned[:limit]
 
 
 # ----------------------------------------------------------------------
@@ -400,6 +494,27 @@ _MOOD_LABEL_RE = re.compile(
     r"^\s*(?:mood|atmosphere|vibe|feeling|氛围|情绪|气氛|情感)\s*[:：]\s*(.+?)\s*$",
     re.IGNORECASE,
 )
+
+
+def tempo_label_from_bpm(bpm: int) -> str:
+    """按传统速度术语把 BPM 映射成标签（模型给的 Tempo 常与 BPM 打架）。"""
+    try:
+        value = int(bpm)
+    except (TypeError, ValueError):
+        return ""
+    if value < 60:
+        return "Largo"
+    if value < 76:
+        return "Adagio"
+    if value < 108:
+        return "Andante"
+    if value < 120:
+        return "Moderato"
+    if value < 156:
+        return "Allegro"
+    if value < 176:
+        return "Vivace"
+    return "Presto"
 
 
 def extract_mood(text: str) -> Optional[str]:

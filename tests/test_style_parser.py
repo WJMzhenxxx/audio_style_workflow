@@ -335,3 +335,32 @@ def test_genre_case_and_concat_normalized():
     assert normalize_genre("progressive house") == "Progressive House"
     assert normalize_genre("EDM") == "EDM"          # 缩写保持大写
     assert extract_styles_from_text("TAGS: poprock, rock, pop") == ["Pop-Rock", "Rock", "Pop"]
+
+
+def test_concat_genre_split():
+    from audio_style_workflow.style_parser import normalize_genre
+
+    assert normalize_genre("progressivehouse") == "Progressive House"
+    assert normalize_genre("ambientpop") == "Ambient Pop"
+    assert normalize_genre("vocaltrance") == "Vocal Trance"
+
+
+def test_prose_falls_back_to_description_scan():
+    """模型只给描述、没给 TAGS 行时，从描述里兜底提取（不能把整句当标签）。"""
+    from audio_style_workflow.style_parser import extract_styles_from_text
+
+    prose = (
+        "这是一首典型的渐进式Trance作品，整体风格融合了旋律化的合成器编排"
+        "与强烈的节奏推进感，展现出2010年代中期现代Trance音乐的标志性特征。"
+    )
+    assert extract_styles_from_text(prose) == ["Trance"]
+
+
+def test_tempo_label_from_bpm():
+    from audio_style_workflow.style_parser import tempo_label_from_bpm
+
+    assert tempo_label_from_bpm(100) == "Andante"
+    assert tempo_label_from_bpm(125) == "Allegro"
+    assert tempo_label_from_bpm(136) == "Allegro"
+    assert tempo_label_from_bpm(50) == "Largo"
+    assert tempo_label_from_bpm(180) == "Presto"

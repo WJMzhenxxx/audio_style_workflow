@@ -37,6 +37,7 @@ from .style_parser import (
     extract_musical_meta,
     extract_review,
     extract_score,
+    tempo_label_from_bpm,
 )
 from .tagger import TaggerError, get_styles, write_extra_tags, write_styles
 
@@ -70,6 +71,8 @@ class WorkflowConfig:
     per_song: bool = False
     #: 扫描记录每累计多少条就落盘一次（0 = 只在结束时保存）
     state_flush_every: int = 10
+    #: 用 BPM 换算 Tempo 标签（替代模型给的 Tempo，避免"136 BPM = Moderato"这类矛盾）
+    tempo_from_bpm: bool = False
 
 
 @dataclass
@@ -374,6 +377,10 @@ def step_parse(
             task.mood = meta.get("mood")
             task.score = meta.get("score")
             task.review = meta.get("review")
+            if config.tempo_from_bpm and task.bpm is not None:
+                derived = tempo_label_from_bpm(task.bpm)
+                if derived:
+                    task.tempo = derived
             logger.info(
                 "[meta] %s -> BPM=%s Tempo=%s Key=%s Mood=%s Score=%s",
                 task.path.name, task.bpm, task.tempo, task.key,
