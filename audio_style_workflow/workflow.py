@@ -49,7 +49,7 @@ class WorkflowConfig:
 
     root: Path
     split_dir: Optional[Path] = None          # TTA 分轨输出目录（默认与整轨同目录）
-    custom_tag_key: str = "STYLE"             # 自定义风格标签键名
+    custom_tag_key: str = "GENRE"             # 自定义风格标签键名
     style_joiner: str = "; "                  # 多风格连接符
     skip_tagged: bool = False                 # 已有自定义标签的歌曲跳过分析
     skip_scanned: bool = False                # 扫描记录中已成功且未变化的歌曲跳过

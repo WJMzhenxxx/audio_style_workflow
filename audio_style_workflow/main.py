@@ -4,7 +4,7 @@
 
     python -m audio_style_workflow.main D:\\Music \\
         --endpoint https://analyzer.example.com/api/analyze \\
-        --custom-tag STYLE --skip-tagged
+        --custom-tag GENRE --skip-tagged
 """
 from __future__ import annotations
 

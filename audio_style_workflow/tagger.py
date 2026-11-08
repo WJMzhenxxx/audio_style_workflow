@@ -1,7 +1,7 @@
 """把风格解析结果写回音频文件的自定义标签（基于 mutagen）。
 
-- FLAC : VorbisComment 自由字段（默认键 ``STYLE``）
-- MP3  : ID3 ``TXXX:<key>`` 用户自定义文本帧（默认 ``TXXX:STYLE``）
+- FLAC : VorbisComment 自由字段（默认键 ``GENRE``）
+- MP3  : ID3 ``TXXX:<key>`` 用户自定义文本帧（默认 ``TXXX:GENRE``）
 
 键名/分隔符均可自定义。
 """
@@ -27,7 +27,7 @@ from mutagen.id3 import (
 from .models import AudioFormat
 
 #: 默认自定义风格标签键名
-DEFAULT_CUSTOM_KEY = "STYLE"
+DEFAULT_CUSTOM_KEY = "GENRE"
 #: 多风格默认连接符（写成单值，避免个别播放器把多值字段显示成两行）
 DEFAULT_JOINER = "; "
 #: 音乐属性标签键名（FLAC VorbisComment；MP3 见 _write 内映射）

@@ -60,7 +60,7 @@ python -m uvicorn examples.mock_server:app --port 8010
 # 2) 跑工作流
 python -m audio_style_workflow.main "D:\我的音乐" \
     --endpoint http://127.0.0.1:8010/analyze \
-    --custom-tag STYLE \
+    --custom-tag GENRE \
     --skip-tagged
 ```
 
@@ -258,7 +258,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `-e / --endpoint` | 分析端点 URL（或环境变量 `SONG_ANALYZER_ENDPOINT`） |
 | `--api-key` | Bearer 鉴权（或 `SONG_ANALYZER_API_KEY`） |
 | `--file-field` | 上传字段名，默认 `file` |
-| `--custom-tag` | 自定义风格标签键名，默认 `STYLE`（FLAC 直接字段；MP3 写 `TXXX:STYLE`） |
+| `--custom-tag` | 自定义风格标签键名，默认 `GENRE`（FLAC 直接字段；MP3 写 `TXXX:GENRE`） |
 | `--joiner` | 多风格连接符，默认 `"; "` |
 | `--no-musical-tags` | 不写入 BPM/Tempo/Key 标签（默认写入） |
 | `--skip-tagged` | 跳过已有该自定义标签的歌曲（依据文件内标签） |
@@ -428,8 +428,8 @@ dry-run 模式不读也不写扫描记录，保持预览无副作用。
 
 | 格式 | 写入位置 | 查看方式 |
 | --- | --- | --- |
-| FLAC | VorbisComment 自由字段 `STYLE` | `ffprobe file.flac 2>&1 \| findstr STYLE` |
-| MP3 | ID3v2.4 `TXXX:STYLE` 用户文本帧 | foobar2000 Columns UI / mp3tag 均可读 |
+| FLAC | VorbisComment 自由字段 `GENRE` | `ffprobe file.flac 2>&1 \| findstr GENRE` |
+| MP3 | ID3v2.4 `TXXX:GENRE` 用户文本帧 | foobar2000 Columns UI / mp3tag 均可读 |
 
 除风格外，还会写入从模型输出里提取的 **BPM / Tempo / Key**（可用
 `--no-musical-tags` 关闭）：
