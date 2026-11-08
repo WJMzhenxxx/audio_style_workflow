@@ -266,6 +266,8 @@ class SglangMusicClient(SongAnalysisClient):
         self._identical_streak = 0
         self._identical_warned = False
         self._last_sent_path: Optional[str] = None
+        #: 最近一次 chat 响应的 finish_reason（"stop" / "length" / None）
+        self._last_finish_reason: Optional[str] = None
 
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -348,13 +350,17 @@ class SglangMusicClient(SongAnalysisClient):
             self._identical_streak = 1
         if self._identical_streak >= 2 and not self._identical_warned:
             self._identical_warned = True
+            preview = " ".join(text.split())[:200]
             logger.warning(
                 "[sglang] 连续 %d 首歌返回完全相同的文本（%d 字符），疑似服务端没有读到音频。"
                 "请检查音频路径对服务端是否可见（客户端 Windows 路径 vs 服务端 Linux 路径？），"
-                "或用 --sglang-path-map 本地前缀=服务端前缀 做映射。当前发送路径示例: %s",
+                "或用 --sglang-path-map 本地前缀=服务端前缀 做映射；"
+                "也可用 --sglang-audio-base64 内联发送。"
+                "已发送: %s；文本预览: %s",
                 self._identical_streak,
                 len(text),
                 self._last_sent_path or "(未知)",
+                preview or "(空)",
             )
 
     def _disable_thinking_budget(self, reason: str) -> None:
@@ -407,6 +413,8 @@ class SglangMusicClient(SongAnalysisClient):
             payload["reasoning"] = reasoning
         if self.thinking_budget is not None:
             payload["thinking_budget_applied"] = bool(self.thinking_budget_applied)
+        if self.api_mode == "chat" and self._last_finish_reason:
+            payload["finish_reason"] = self._last_finish_reason
         styles = extract_styles_from_text(text)
         if styles:
             payload["styles"] = styles
@@ -481,6 +489,8 @@ class SglangMusicClient(SongAnalysisClient):
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
         reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
+        finish_reason = choices[0].get("finish_reason") if isinstance(choices[0], dict) else None
+        self._last_finish_reason = finish_reason
 
         has_content = isinstance(content, str) and content.strip()
         has_reasoning = isinstance(reasoning, str) and reasoning.strip()
@@ -492,9 +502,9 @@ class SglangMusicClient(SongAnalysisClient):
             # thinking 模型常见：思考未闭合（思考段吃光 max_tokens）时 content 为 null，
             # 真正的答案落在 reasoning_content 里。直接失败会白白丢掉可用结果。
             logger.warning(
-                "[sglang] 响应 content 为空（多为思考段未闭合 / max_tokens 被思考耗尽），"
-                "回退使用 reasoning_content（%d 字符）；如需正常 content，"
-                "可增大 --max-new-tokens 或启用 thinking budget 强制思考收尾",
+                "[sglang] 响应 content 为空（finish_reason=%s），回退使用 reasoning_content"
+                "（%d 字符）；如需正常 content，可增大 --max-new-tokens 或启用 thinking budget 强制思考收尾",
+                finish_reason,
                 len(reasoning),
             )
             return reasoning, reasoning, raw, "reasoning_content"

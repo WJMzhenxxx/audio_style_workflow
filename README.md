@@ -170,7 +170,21 @@ sglang 的 `load_audio` 原生支持 `data:` URL（注意：**裸 base64 不支�
 # C) 服务端挂载同一份目录（NFS / SMB / sshfs），路径本身一致
 ```
 
-客户端还会检测"连续多首返回完全相同文本"并打印 warning 提示输入可能没送达。
+客户端还会检测"连续多首返回完全相同文本"并打印 warning 提示输入可能没送达，
+同时把响应文本前 200 字打进日志、把 `finish_reason` 记进 `details/*.json`
+（`length` 表示被 `max_tokens` 截断，`stop` 表示模型自己结束）。
+
+### 单曲探测（排查「输出与歌曲无关」）
+
+```bash
+# 直接对服务端发一次请求，打印 finish_reason / content / reasoning / 原始 JSON
+python examples/probe_sglang.py "music/Aphonia.mp3" \
+    --base-url http://10.0.0.5:43449 --base64 --max-tokens 2048
+
+# 换极简 prompt，判断是 prompt 问题还是音频没进去
+python examples/probe_sglang.py "music/Aphonia.mp3" \
+    --base-url http://10.0.0.5:43449 --base64 --prompt "用一句话描述这段音频。"
+```
 
 #### `content` 为 null（答案落在 `reasoning_content`）
 

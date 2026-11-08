@@ -571,3 +571,13 @@ def test_cli_sglang_audio_base64(tmp_path):
     args = _parse_cli(tmp_path, "--sglang", "http://h:1", "--sglang-audio-base64")
     assert build_client(args).audio_base64 is True
     assert build_client(_parse_cli(tmp_path, "--sglang", "http://h:1")).audio_base64 is False
+
+
+def test_finish_reason_recorded(audio_file):
+    transport = RecordingTransport({
+        "choices": [{"finish_reason": "length",
+                     "message": {"content": None, "reasoning_content": "x" * 10}}]
+    })
+    payload = SglangMusicClient(api_mode="chat", transport=transport).analyze(audio_file)
+    assert payload["finish_reason"] == "length"
+    assert payload["content_source"] == "reasoning_content"
