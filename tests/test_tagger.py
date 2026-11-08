@@ -120,7 +120,7 @@ def test_write_and_read_extra_tags_flac(fresh_flac):
     written = write_extra_tags(fresh_flac, bpm=118, tempo="Moderato", key="C major")
     assert written == {"bpm": "118", "tempo": "Moderato", "key": "C major"}
     assert read_extra_tags(fresh_flac) == {
-        "bpm": "118", "tempo": "Moderato", "key": "C major",
+        "bpm": "118", "tempo": "Moderato", "key": "C major", "mood": None,
     }
 
 
@@ -129,7 +129,9 @@ def test_extra_tags_partial_and_empty(fresh_flac):
 
     assert write_extra_tags(fresh_flac, bpm=None, tempo="", key=None) == {}
     assert write_extra_tags(fresh_flac, bpm=90) == {"bpm": "90"}
-    assert read_extra_tags(fresh_flac) == {"bpm": "90", "tempo": None, "key": None}
+    assert read_extra_tags(fresh_flac) == {
+        "bpm": "90", "tempo": None, "key": None, "mood": None,
+    }
 
 
 def test_extra_tags_reject_invalid_bpm(fresh_flac):
@@ -137,3 +139,60 @@ def test_extra_tags_reject_invalid_bpm(fresh_flac):
 
     assert write_extra_tags(fresh_flac, bpm=0, tempo=None, key=None) == {}
     assert read_extra_tags(fresh_flac)["bpm"] is None
+
+
+# ----------------------------------------------------------------------
+# Windows 可识别的标准帧 + 氛围
+# ----------------------------------------------------------------------
+def test_mp3_uses_standard_id3_frames(fresh_flac, tmp_path):
+    """MP3 必须写 TCON/TMOO/TBPM/TKEY，Windows 资源管理器才显示。"""
+    from mutagen.id3 import ID3
+
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags, write_styles
+
+    mp3 = tmp_path / "win.mp3"
+    subprocess.run(
+        [resolve_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libmp3lame", str(mp3)],
+        capture_output=True, check=True,
+    )
+    write_styles(mp3, ["Pop", "Dream Pop"])          # 默认 GENRE -> TCON
+    write_extra_tags(mp3, bpm=100, tempo="Moderato",
+                     key="F# major", mood="温暖, 舒缓")
+
+    tags = ID3(str(mp3))
+    assert tags.getall("TCON")[0].text == ["Pop; Dream Pop"]
+    assert tags.getall("TMOO")[0].text == ["温暖, 舒缓"]
+    assert tags.getall("TBPM")[0].text == ["100"]
+    assert tags.getall("TKEY")[0].text == ["F# major"]
+    assert get_styles(mp3) == "Pop; Dream Pop"
+    assert read_extra_tags(mp3)["mood"] == "温暖, 舒缓"
+
+
+def test_flac_writes_genre_and_mood(fresh_flac):
+    from mutagen.flac import FLAC
+
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags, write_styles
+
+    write_styles(fresh_flac, ["Pop", "Dream Pop"])
+    write_extra_tags(fresh_flac, bpm=100, mood="温暖, 舒缓")
+    audio = FLAC(str(fresh_flac))
+    assert audio.get("GENRE") == ["Pop; Dream Pop"]
+    assert audio.get("MOOD") == ["温暖, 舒缓"]
+    assert read_extra_tags(fresh_flac)["mood"] == "温暖, 舒缓"
+
+
+def test_custom_key_still_uses_txxx(tmp_path):
+    from mutagen.id3 import ID3
+
+    from audio_style_workflow.tagger import get_styles, write_styles
+
+    mp3 = tmp_path / "custom.mp3"
+    subprocess.run(
+        [resolve_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "libmp3lame", str(mp3)],
+        capture_output=True, check=True,
+    )
+    write_styles(mp3, ["Jazz"], key="MY_STYLE")
+    assert ID3(str(mp3)).getall("TXXX:MY_STYLE")[0].text == ["Jazz"]
+    assert get_styles(mp3, key="MY_STYLE") == "Jazz"

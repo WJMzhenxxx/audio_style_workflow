@@ -33,6 +33,7 @@ from .style_parser import (
     StyleParser,
     StyleParseError,
     extract_genre_rationale,
+    extract_mood,
     extract_musical_meta,
 )
 from .tagger import TaggerError, get_styles, write_extra_tags, write_styles
@@ -304,11 +305,21 @@ def _analysis_meta(analysis: Any) -> dict[str, Any]:
     """取出 BPM / Tempo / Key：优先用响应里的结构化字段，否则从评价文本解析。"""
     if not isinstance(analysis, dict):
         return {}
-    meta = {k: analysis.get(k) for k in ("bpm", "tempo", "key") if analysis.get(k) is not None}
+    meta = {
+        k: analysis.get(k)
+        for k in ("bpm", "tempo", "key", "mood")
+        if analysis.get(k) is not None
+    }
     if meta:
         return meta
     description = _analysis_description(analysis)
-    return extract_musical_meta(description) if description else {}
+    if not description:
+        return {}
+    parsed = extract_musical_meta(description)
+    mood = extract_mood(description)
+    if mood:
+        parsed["mood"] = mood
+    return parsed
 
 
 def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser) -> PipelineState:
@@ -342,9 +353,10 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
             task.bpm = meta.get("bpm")
             task.tempo = meta.get("tempo")
             task.key = meta.get("key")
+            task.mood = meta.get("mood")
             logger.info(
-                "[meta] %s -> BPM=%s Tempo=%s Key=%s",
-                task.path.name, task.bpm, task.tempo, task.key,
+                "[meta] %s -> BPM=%s Tempo=%s Key=%s Mood=%s",
+                task.path.name, task.bpm, task.tempo, task.key, task.mood,
             )
         if recorder is not None:
             description = _analysis_description(task.analysis)
@@ -368,6 +380,7 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
                         bpm=task.bpm,
                         tempo=task.tempo,
                         key=task.key,
+                        mood=task.mood,
                         rationale=rationale,
                     )
                 except Exception as exc:  # 评价落盘失败不影响主流程
@@ -376,7 +389,7 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
 
 
 def _has_musical_meta(task: TrackTask) -> bool:
-    return bool(task.bpm is not None or task.tempo or task.key)
+    return bool(task.bpm is not None or task.tempo or task.key or task.mood)
 
 
 def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanStateStore] = None) -> PipelineState:
@@ -396,8 +409,8 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
             logger.info("[dry-run] %s: 将写入 %s=%r", task.path.name, config.custom_tag_key, task.would_write)
             if config.write_musical_tags and _has_musical_meta(task):
                 logger.info(
-                    "[dry-run] %s: 将写入 BPM=%s Tempo=%s Key=%s",
-                    task.path.name, task.bpm, task.tempo, task.key,
+                    "[dry-run] %s: 将写入 BPM=%s Tempo=%s Key=%s Mood=%s",
+                    task.path.name, task.bpm, task.tempo, task.key, task.mood,
                 )
             continue
         try:
@@ -407,7 +420,11 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
             task.tagged = True
             if config.write_musical_tags and _has_musical_meta(task):
                 written = write_extra_tags(
-                    task.path, bpm=task.bpm, tempo=task.tempo, key=task.key
+                    task.path,
+                    bpm=task.bpm,
+                    tempo=task.tempo,
+                    key=task.key,
+                    mood=task.mood,
                 )
                 logger.info("[tag] %s <= %s", task.path.name, written)
             if store is not None:

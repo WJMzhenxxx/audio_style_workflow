@@ -426,19 +426,25 @@ dry-run 模式不读也不写扫描记录，保持预览无副作用。
 
 ## 自定义标签长什么样
 
-| 格式 | 写入位置 | 查看方式 |
+| 格式 | 写入位置 | Windows 资源管理器 |
 | --- | --- | --- |
-| FLAC | VorbisComment 自由字段 `GENRE` | `ffprobe file.flac 2>&1 \| findstr GENRE` |
-| MP3 | ID3v2.4 `TXXX:GENRE` 用户文本帧 | foobar2000 Columns UI / mp3tag 均可读 |
+| FLAC | VorbisComment `GENRE` / `MOOD` | 属性 → 详细信息可见「流派」 |
+| MP3 | **标准 ID3 帧** `TCON`(流派) / `TMOO`(氛围) / `TBPM` / `TKEY` | 属性 → 详细信息直接显示 |
+
+> 早期版本写的是自定义帧 `TXXX:GENRE`，Windows 资源管理器**不显示**；
+> 现在默认键 `GENRE` / `MOOD` / `BPM` / `KEY` 会映射到标准帧，自定义键
+> （如 `--custom-tag MY_STYLE`）仍走 `TXXX:<key>`。
 
 除风格外，还会写入从模型输出里提取的 **BPM / Tempo / Key**（可用
 `--no-musical-tags` 关闭）：
 
 | 属性 | FLAC (VorbisComment) | MP3 (ID3v2.4) | 示例 |
 | --- | --- | --- | --- |
+| 流派（类别） | `GENRE` | 标准帧 `TCON` | `Pop; Dream Pop` |
+| 氛围 | `MOOD` | 标准帧 `TMOO` | `温暖, 舒缓` |
 | BPM | `BPM` | 标准帧 `TBPM` | `120` |
-| Tempo | `TEMPO` | `TXXX:TEMPO` | `Moderato` / `慢板` |
-| Key | `KEY` | 标准帧 `TKEY` | `C major` / `A小调` |
+| Tempo | `TEMPO` | `TXXX:TEMPO`（无标准帧） | `Moderato` |
+| Key | `KEY` | 标准帧 `TKEY` | `C major` |
 
 提取是**确定性的**（无需 LLM）：既认带标签的写法 `BPM: 120` / `Tempo: Moderato`
 / `Key: C major`（含中文 `速度:` / `调性:`），也认行内写法 `120 BPM`、`F# minor`；

@@ -217,6 +217,7 @@ class AnalysisDetailRecorder:
         bpm: Optional[int] = None,
         tempo: Optional[str] = None,
         key: Optional[str] = None,
+        mood: Optional[str] = None,
         rationale: Optional[str] = None,
     ) -> Optional[Path]:
         """把一首歌的完整评价（模型 description / reasoning_content）写成可读文本。
@@ -240,6 +241,8 @@ class AnalysisDetailRecorder:
             header.append(f"Tempo: {tempo}")
         if key:
             header.append(f"Key: {key}")
+        if mood:
+            header.append(f"氛围: {mood}")
         if content_source:
             header.append(f"来源: {content_source}")
 

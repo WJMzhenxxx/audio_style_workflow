@@ -307,7 +307,7 @@ def test_musical_tags_written_for_all_tracks(library):
         assert task.tempo == "Moderato"
         assert task.key == "C major"
         assert read_extra_tags(task.path) == {
-            "bpm": "120", "tempo": "Moderato", "key": "C major",
+            "bpm": "120", "tempo": "Moderato", "key": "C major", "mood": None,
         }
 
 

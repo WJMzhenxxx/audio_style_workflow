@@ -247,3 +247,13 @@ def test_instruction_echo_does_not_leak_into_labels():
     echo = "第1行只写风格标签，用逗号分隔，不要加前缀：氛围音乐, 后摇"
     assert extract_styles_from_text(echo) == ["氛围音乐", "后摇"]
     assert extract_styles_from_text("1. 流行, 摇滚") == ["流行", "摇滚"]
+
+
+def test_extract_mood():
+    from audio_style_workflow.style_parser import extract_mood
+
+    assert extract_mood("Mood: Warm, Dreamy\nBPM: 100") == "Warm, Dreamy"
+    assert extract_mood("氛围：温暖, 舒缓\nWhy: ...") == "温暖, 舒缓"
+    assert extract_mood("情绪: 忧郁") == "忧郁"
+    assert extract_mood("BPM: 100\nKey: C major") is None
+    assert extract_mood("") is None

@@ -1,8 +1,10 @@
-"""把风格解析结果写回音频文件的自定义标签（基于 mutagen）。
+"""把风格解析结果写回音频文件的标签（基于 mutagen）。
 
-- FLAC : VorbisComment 自由字段（默认键 ``GENRE``）
-- MP3  : ID3 ``TXXX:<key>`` 用户自定义文本帧（默认 ``TXXX:GENRE``）
+- FLAC：VorbisComment 自由字段（默认 ``GENRE`` / ``MOOD`` / ``BPM`` / ``TEMPO`` / ``KEY``）
+- MP3 ：**标准 ID3 帧**——``TCON``(流派) / ``TMOO``(氛围) / ``TBPM``(BPM) / ``TKEY``(调性)，
+  ``TEMPO`` 无标准帧，落 ``TXXX:TEMPO``
 
+用标准帧是为了让 Windows 资源管理器「属性 → 详细信息」能直接显示流派/氛围。
 键名/分隔符均可自定义。
 """
 from __future__ import annotations
@@ -16,8 +18,10 @@ from mutagen.id3 import (
     ID3NoHeaderError,
     TALB,
     TBPM,
+    TCON,
     TIT2,
     TKEY,
+    TMOO,
     TPE1,
     TPE2,
     TRCK,
@@ -34,8 +38,17 @@ DEFAULT_JOINER = "; "
 DEFAULT_BPM_KEY = "BPM"
 DEFAULT_TEMPO_KEY = "TEMPO"
 DEFAULT_KEY_KEY = "KEY"
+DEFAULT_MOOD_KEY = "MOOD"
 
 _MAX_KEY_LEN = 60
+
+#: 键名 -> MP3 标准 ID3 帧（Windows 资源管理器只显示标准帧）
+_MP3_STANDARD_FRAMES: dict[str, type] = {
+    "GENRE": TCON,   # 流派
+    "MOOD": TMOO,    # 氛围
+    "BPM": TBPM,
+    "KEY": TKEY,
+}
 
 
 class TaggerError(RuntimeError):
@@ -53,6 +66,30 @@ def _check_key(key: str) -> str:
     return key
 
 
+def _mp3_frame_id(key: str) -> Optional[str]:
+    """键名对应的标准 ID3 帧 id（GENRE/MOOD/BPM/KEY），否则 None → 走 TXXX。"""
+    frame_cls = _MP3_STANDARD_FRAMES.get(key.strip().upper())
+    return frame_cls.__name__ if frame_cls is not None else None
+
+
+def _set_mp3_text(tags: ID3, key: str, value: str) -> None:
+    """按标准帧写；无标准帧的键回落到 ``TXXX:<key>``。"""
+    frame_cls = _MP3_STANDARD_FRAMES.get(key.strip().upper())
+    if frame_cls is not None:
+        tags.setall(frame_cls.__name__, [frame_cls(encoding=3, text=value)])
+    else:
+        tags.setall(f"TXXX:{key}", [TXXX(encoding=3, desc=key, text=value)])
+
+
+def _get_mp3_text(tags: ID3, key: str) -> Optional[str]:
+    frame_cls = _MP3_STANDARD_FRAMES.get(key.strip().upper())
+    frame_id = frame_cls.__name__ if frame_cls is not None else f"TXXX:{key}"
+    frames = tags.getall(frame_id)
+    if frames and getattr(frames[0], "text", None):
+        return str(frames[0].text[0])
+    return None
+
+
 def write_styles(
     path: Path,
     styles: Sequence[str],
@@ -60,7 +97,10 @@ def write_styles(
     key: str = DEFAULT_CUSTOM_KEY,
     joiner: str = DEFAULT_JOINER,
 ) -> str:
-    """将风格列表写入自定义标签，返回实际写入的值。
+    """将风格列表写入标签，返回实际写入的值。
+
+    FLAC 写 VorbisComment；MP3 默认写标准帧 ``TCON``（Windows 可识别），
+    自定义键名则写 ``TXXX:<key>``。
 
     :raises TaggerError: 格式不受支持 / 无有效风格 / 底层写入失败
     """
@@ -86,7 +126,7 @@ def write_styles(
                 tags = ID3(str(path))
             except ID3NoHeaderError:
                 tags = ID3()
-            tags.setall(f"TXXX:{key}", [TXXX(encoding=3, desc=key, text=value)])
+            _set_mp3_text(tags, key, value)
             tags.save(str(path), v2_version=4)
         else:
             raise TaggerError(f"暂不支持向 {path.suffix or '<无后缀>'} 格式写标签: {path}")
@@ -98,7 +138,7 @@ def write_styles(
 
 
 def get_styles(path: Path, *, key: str = DEFAULT_CUSTOM_KEY) -> Optional[str]:
-    """读取自定义风格标签；不存在或读取失败（如文件损坏）返回 None。"""
+    """读取风格标签（MP3 优先读标准帧 ``TCON``）；不存在或读取失败返回 None。"""
     path = Path(path)
     key = _check_key(key)
     fmt = AudioFormat.from_path(path)
@@ -113,10 +153,7 @@ def get_styles(path: Path, *, key: str = DEFAULT_CUSTOM_KEY) -> Optional[str]:
                 tags = ID3(str(path))
             except ID3NoHeaderError:
                 return None
-            frames = tags.getall(f"TXXX:{key}")
-            if frames and frames[0].text:
-                return str(frames[0].text[0])
-            return None
+            return _get_mp3_text(tags, key)
     except Exception:
         return None
     return None
@@ -128,17 +165,21 @@ def write_extra_tags(
     bpm: Optional[int] = None,
     tempo: Optional[str] = None,
     key: Optional[str] = None,
+    mood: Optional[str] = None,
     tempo_key: str = DEFAULT_TEMPO_KEY,
+    mood_key: str = DEFAULT_MOOD_KEY,
 ) -> dict[str, str]:
-    """把 BPM / Tempo / Key 写入音频标签，返回实际写入的字段。
+    """把 BPM / Tempo / Key / Mood 写入音频标签，返回实际写入的字段。
 
-    - FLAC：VorbisComment ``BPM`` / ``TEMPO`` / ``KEY``
-    - MP3 ：标准帧 ``TBPM`` / ``TKEY``，Tempo 用 ``TXXX:TEMPO``
+    - FLAC：VorbisComment ``BPM`` / ``TEMPO`` / ``KEY`` / ``MOOD``
+    - MP3 ：标准帧 ``TBPM`` / ``TKEY`` / ``TMOO``（Windows 可显示），
+      Tempo 无标准帧，落 ``TXXX:TEMPO``
 
-    三个值都为空时不做任何写入（返回空 dict）；单个值非法只会被跳过。
+    所有值都为空时不做任何写入（返回空 dict）；单个值非法只会被跳过。
     """
     path = Path(path)
     tempo_key = _check_key(tempo_key)
+    mood_key = _check_key(mood_key)
     written: dict[str, str] = {}
 
     bpm_value: Optional[str] = None
@@ -151,8 +192,14 @@ def write_extra_tags(
             bpm_value = str(bpm_int)
     tempo_value = (tempo or "").strip() or None
     key_value = (key or "").strip() or None
+    mood_value = (mood or "").strip() or None
 
-    if bpm_value is None and tempo_value is None and key_value is None:
+    if (
+        bpm_value is None
+        and tempo_value is None
+        and key_value is None
+        and mood_value is None
+    ):
         return written
 
     fmt = AudioFormat.from_path(path)
@@ -168,6 +215,9 @@ def write_extra_tags(
             if key_value is not None:
                 audio[DEFAULT_KEY_KEY] = [key_value]
                 written["key"] = key_value
+            if mood_value is not None:
+                audio[mood_key] = [mood_value]
+                written["mood"] = mood_value
             audio.save()
         elif fmt is AudioFormat.MP3:
             try:
@@ -180,6 +230,9 @@ def write_extra_tags(
             if key_value is not None:
                 tags.setall("TKEY", [TKEY(encoding=3, text=key_value)])
                 written["key"] = key_value
+            if mood_value is not None:
+                tags.setall("TMOO", [TMOO(encoding=3, text=mood_value)])
+                written["mood"] = mood_value
             if tempo_value is not None:
                 tags.setall(
                     f"TXXX:{tempo_key}",
@@ -197,11 +250,13 @@ def write_extra_tags(
 
 
 def read_extra_tags(
-    path: Path, *, tempo_key: str = DEFAULT_TEMPO_KEY
+    path: Path, *, tempo_key: str = DEFAULT_TEMPO_KEY, mood_key: str = DEFAULT_MOOD_KEY
 ) -> dict[str, Optional[str]]:
-    """读取 BPM / Tempo / Key；缺失或读取失败返回 None（不抛异常）。"""
+    """读取 BPM / Tempo / Key / Mood；缺失或读取失败返回 None（不抛异常）。"""
     path = Path(path)
-    info: dict[str, Optional[str]] = {"bpm": None, "tempo": None, "key": None}
+    info: dict[str, Optional[str]] = {
+        "bpm": None, "tempo": None, "key": None, "mood": None,
+    }
     fmt = AudioFormat.from_path(path)
     try:
         if fmt is AudioFormat.FLAC:
@@ -216,6 +271,7 @@ def read_extra_tags(
             info["bpm"] = _flac_first(DEFAULT_BPM_KEY)
             info["tempo"] = _flac_first(tempo_key)
             info["key"] = _flac_first(DEFAULT_KEY_KEY)
+            info["mood"] = _flac_first(mood_key)
         elif fmt is AudioFormat.MP3:
             try:
                 tags = ID3(str(path))
@@ -230,6 +286,7 @@ def read_extra_tags(
 
             info["bpm"] = _frame_first("TBPM")
             info["key"] = _frame_first("TKEY")
+            info["mood"] = _frame_first("TMOO")
             info["tempo"] = _frame_first(f"TXXX:{tempo_key}")
     except Exception:
         return info

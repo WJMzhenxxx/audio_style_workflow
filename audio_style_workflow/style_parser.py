@@ -49,19 +49,21 @@ DEFAULT_ANALYSIS_PROMPT = (
     "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
     "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
     "Line 4: Key: <key signature, e.g. C major / A minor>\n"
-    "Line 5: Why: <one or two sentences explaining why these styles fit this track>\n"
+    "Line 5: Mood: <one or two mood/atmosphere words, e.g. Warm, Dreamy, Melancholic>\n"
+    "Line 6: Why: <one or two sentences explaining why these styles fit this track>\n"
     "Then leave one blank line and describe in detail the genre, instruments, "
     "production style and the overall mood it creates."
 )
 
-#: 中文版 prompt：风格名 / Tempo / Key 保持英文，只有 Why 与正文用中文。
+#: 中文版 prompt：风格名 / Tempo / Key 保持英文，Mood 与 Why 及正文用中文。
 #: 这样能沿用通行写法（Dream Pop、Moderato、C major），也便于按风格检索。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请聆听这段音频并分析。严格按下面 5 行输出，不要加任何多余前缀：\n"
+    "请聆听这段音频并分析。严格按下面 6 行输出，不要加任何多余前缀：\n"
     "<风格标签，用英文书写，逗号分隔，例如 Pop, R&B, Dream Pop, Synth Pop>\n"
     "BPM: <每分钟节拍数，整数，例如 120>\n"
     "Tempo: <速度描述，用英文，例如 Slow / Moderato / Fast>\n"
     "Key: <调性，用英文，例如 C major / A minor>\n"
+    "Mood: <用中文写一两个词描述氛围，例如 温暖, 舒缓, 忧郁, 空灵>\n"
     "Why: <用中文写一两句话，说明为什么判定为这些风格>\n"
     "然后空一行，用中文详细描述曲风、配器、制作与整体情绪；"
     "描述里提到风格名、速度术语、调性时仍保留英文原词。"
@@ -310,6 +312,38 @@ def extract_musical_meta(text: str) -> dict[str, Any]:
     if key:
         result["key"] = key
     return result
+
+
+# ----------------------------------------------------------------------
+# 氛围（Mood）
+# ----------------------------------------------------------------------
+#: ``Mood: 温暖, 舒缓`` / ``氛围：空灵``
+_MOOD_LABEL_RE = re.compile(
+    r"^\s*(?:mood|atmosphere|vibe|feeling|氛围|情绪|气氛|情感)\s*[:：]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def extract_mood(text: str) -> Optional[str]:
+    """提取氛围/情绪（如 ``温暖, 舒缓``）。
+
+    只认带标签的写法（``Mood:`` / ``氛围：``），避免把正文里随便一句
+    情绪描述误当标签。取不到返回 ``None``。
+    """
+    if not text:
+        return None
+    for raw_line in text.splitlines():
+        line = _clean_meta_line(raw_line)
+        if not line:
+            continue
+        match = _MOOD_LABEL_RE.match(line)
+        if not match:
+            continue
+        value = _clean_meta_value(match.group(1))
+        value = value.strip("[]【】").strip()
+        if value and len(value) <= _MAX_META_LEN:
+            return value
+    return None
 
 
 # ----------------------------------------------------------------------

@@ -64,6 +64,7 @@ class TrackTask:
     bpm: Optional[int] = None                    # 估计的每分钟节拍数
     tempo: Optional[str] = None                  # 速度术语（Slow / Moderato / 慢板…）
     key: Optional[str] = None                    # 调性（C major / A minor…）
+    mood: Optional[str] = None                   # 氛围（温暖 / 舒缓…）
     genre_rationale: Optional[str] = None        # 为什么判定为这些风格
     tagged: bool = False
     would_write: Optional[str] = None            # dry-run 模式下记录将要写入的值
