@@ -95,25 +95,50 @@ python -m audio_style_workflow.main .\music --mock --mock-freeform --llm-model g
 # 模式1：/generate 基础模式（默认）
 python -m audio_style_workflow.main "D:\我的音乐" --sglang --skip-scanned
 
-# 模式2：/v1/chat/completions（OpenAI 兼容）+ thinking 分离 + budget 控制
+# 模式2：/v1/chat/completions（OpenAI 兼容）+ thinking 分离
 python -m audio_style_workflow.main "D:\我的音乐" --sglang http://localhost:30000 \
-    --sglang-api chat --sglang-thinking-budget 50 --max-new-tokens 1024
+    --sglang-api chat --max-new-tokens 1024
 
 # 或用独立参数 --sglang-base 指定地址（等价写法）
 python -m audio_style_workflow.main "D:\我的音乐" --sglang-base http://192.168.1.10:30000 \
-    --sglang-api chat --sglang-thinking-budget 50
+    --sglang-api chat
 
 # 或用环境变量 SGLANG_BASE（优先级：--sglang-base > --sglang BASE_URL > SGLANG_BASE > 默认）
 set SGLANG_BASE=http://192.168.1.10:30000
 python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-api chat
 ```
 
+#### thinking budget（需要服务端 `--enable-custom-logit-processor`）
+
+Thinking budget 必须同时提供 `custom_logit_processor` 的**序列化字符串**。
+它由 sglang（OpenMOSS `moss-audio` 分支）的
+`Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str()` 产出，
+内容形如 `{"callable": "<dill 序列化 hex>"}`——**不能只写类名**：
+服务端会用 `orjson.loads` 解析该字段，传类名会让 sglang scheduler 抛
+`JSONDecodeError` 并崩溃（SIGQUIT）。
+
+```bash
+# 1) 在装有该 sglang 分支的环境里导出序列化串
+python -c "from sglang.srt.sampling.custom_logit_processor import \
+Qwen3InstructionInjectionThinkingBudgetLogitProcessor as P; print(P.to_str())" > processor.json
+
+# 2) 传给工作流（二选一）
+python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:43449 \
+    --sglang-api chat --sglang-thinking-budget 50 \
+    --sglang-custom-logit-processor @processor.json
+
+set SGLANG_CUSTOM_LOGIT_PROCESSOR=<上面输出的一整行 JSON>
+python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:43449 \
+    --sglang-api chat --sglang-thinking-budget 50
+```
+
+工作流会在**发送前**校验该字段是合法 JSON，不合法立即报错退出（不会波及服务端）；
+若本机恰好装了该 sglang 分支，则会自动调用 `to_str()`，无需手工传参。
+想跳过 budget 直接去掉 `--sglang-thinking-budget` 即可。
+
 参数说明：`--sglang [BASE_URL]` 不带值时读环境变量 `SGLANG_BASE`，再回退
 `http://localhost:30000`；`--sglang-base BASE_URL` 是显式指定地址的等价形式
-（优先级最高）。`--sglang-thinking-budget N` 自动附带 `separate_reasoning` 与
-`custom_logit_processor`（Qwen3InstructionInjectionThinkingBudgetLogitProcessor
-的惯用字符串，可用 `custom_logit_processor` 参数编程覆盖）。
-推理结果同样统一解析为 `styles` + `description`，下游流程不变。
+（优先级最高）。推理结果统一解析为 `styles` + `description`，下游流程不变。
 
 ### 本地模型分析（离线推理，MusicFlamingo）
 
@@ -154,7 +179,8 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--sglang [BASE_URL]` | 使用 sglang 部署的音乐理解模型（默认读 `SGLANG_BASE` 再回退 `http://localhost:30000`；音频传本机路径，需共享文件系统） |
 | `--sglang-base BASE_URL` | 显式指定 sglang 服务基地址（等价 `--sglang BASE_URL`，优先级最高） |
 | `--sglang-api {generate,chat}` | sglang API 模式：`generate`=/generate；`chat`=/v1/chat/completions |
-| `--sglang-thinking-budget N` | chat 模式开启 thinking 分离并限制思考 token 数 |
+| `--sglang-thinking-budget N` | chat 模式开启 thinking 分离并限制思考 token 数（需同时提供下面的处理器串） |
+| `--sglang-custom-logit-processor` | thinking budget 的 `custom_logit_processor` 序列化串（`to_str()` 输出）；支持 `@文件` 或环境变量 `SGLANG_CUSTOM_LOGIT_PROCESSOR` |
 | `--model-id` | 本地 MusicFlamingo 模型 HuggingFace ID，默认 `nvidia/music-flamingo-2601-hf` |
 | `--max-new-tokens` | 模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024） |
 | `--concurrency` | 分析端点并发请求数（本地模型自动串行化） |
@@ -163,7 +189,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 
 环境变量：`SONG_ANALYZER_ENDPOINT`、`SONG_ANALYZER_API_KEY`、
 `SONG_ANALYZER_FILE_FIELD`、`SONG_ANALYZER_LLM_MODEL`、`FFMPEG_PATH`、
-`SGLANG_BASE`、`SONG_ANALYZER_LOG_DIR`。
+`SGLANG_BASE`、`SGLANG_CUSTOM_LOGIT_PROCESSOR`、`SONG_ANALYZER_LOG_DIR`。
 
 ## 日志与逐曲分析明细
 

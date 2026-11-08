@@ -12,10 +12,16 @@ from audio_style_workflow.api.base import SongAnalysisError, create_client
 from audio_style_workflow.api.sglang_client import (
     DEFAULT_ANALYSIS_PROMPT,
     DEFAULT_SGLANG_BASE,
-    DEFAULT_THINKING_PROCESSOR,
+    ENV_CUSTOM_LOGIT_PROCESSOR,
+    ProcessorResolveError,
     SglangMusicClient,
+    resolve_thinking_processor,
+    validate_processor_string,
 )
 from audio_style_workflow.style_parser import StyleParser
+
+#: 合法的 processor 序列化串（sglang 服务端会 orjson.loads 成 dict）
+VALID_PROCESSOR = json.dumps({"callable": "deadbeef"})
 
 
 @pytest.fixture
@@ -64,12 +70,42 @@ def test_factory_creates_sglang_client():
     assert client.api_mode == "generate"
 
 
-def test_thinking_budget_enables_processor_default():
-    client = SglangMusicClient(thinking_budget=50)
-    assert client.custom_logit_processor == DEFAULT_THINKING_PROCESSOR
-    # 未设置 budget 时默认不启用
+def test_thinking_budget_requires_valid_processor():
+    # 未提供序列化串且本机无 sglang 时，必须报错（绝不能把类名发给服务端）
+    with pytest.raises(ProcessorResolveError):
+        SglangMusicClient(thinking_budget=50)
+    # 明确传合法 JSON 时可用
+    client = SglangMusicClient(thinking_budget=50, custom_logit_processor=VALID_PROCESSOR)
+    assert client.custom_logit_processor == VALID_PROCESSOR
+    # 未设置 budget 时不启用
     plain = SglangMusicClient()
     assert plain.thinking_budget is None
+    assert plain.custom_logit_processor is None
+
+
+def test_bare_class_name_rejected_before_sending():
+    """回归：曾把类名当 processor 发给 sglang，导致服务端 orjson 崩溃。"""
+    with pytest.raises(ProcessorResolveError) as err:
+        SglangMusicClient(
+            thinking_budget=50,
+            custom_logit_processor="Qwen3InstructionInjectionThinkingBudgetLogitProcessor",
+        )
+    assert "JSON" in str(err.value)
+
+
+def test_processor_accepts_at_file(tmp_path):
+    f = tmp_path / "processor.json"
+    f.write_text(VALID_PROCESSOR, encoding="utf-8")
+    assert validate_processor_string(f"@{f}") == VALID_PROCESSOR
+    client = SglangMusicClient(thinking_budget=10, custom_logit_processor=f"@{f}")
+    assert client.custom_logit_processor == VALID_PROCESSOR
+
+
+def test_processor_env_var(monkeypatch):
+    monkeypatch.setenv(ENV_CUSTOM_LOGIT_PROCESSOR, VALID_PROCESSOR)
+    assert resolve_thinking_processor() == VALID_PROCESSOR
+    client = SglangMusicClient(thinking_budget=20)
+    assert client.custom_logit_processor == VALID_PROCESSOR
 
 
 # ----------------------------------------------------------------------
@@ -173,6 +209,7 @@ def test_chat_mode_with_thinking_budget(audio_file):
         api_mode="chat",
         thinking_budget=50,
         model_name="default",
+        custom_logit_processor=VALID_PROCESSOR,
         transport=transport,
     )
 
@@ -180,7 +217,7 @@ def test_chat_mode_with_thinking_budget(audio_file):
 
     body = transport.requests[0]["body"]
     assert body["separate_reasoning"] is True
-    assert body["custom_logit_processor"] == DEFAULT_THINKING_PROCESSOR
+    assert body["custom_logit_processor"] == VALID_PROCESSOR
     assert body["custom_params"] == {"thinking_budget": 50}
 
     # reasoning_content 分离后不影响风格提取（只用 content）
@@ -189,16 +226,17 @@ def test_chat_mode_with_thinking_budget(audio_file):
 
 
 def test_chat_mode_custom_processor_override(audio_file):
+    other = json.dumps({"callable": "cafebabe"})
     transport = RecordingTransport({"choices": [{"message": {"content": "Pop\nx"}}]})
     client = SglangMusicClient(
         api_mode="chat",
         thinking_budget=64,
-        custom_logit_processor="MyCustomProcessor:v2",
+        custom_logit_processor=other,
         transport=transport,
     )
     client.analyze(audio_file)
     body = transport.requests[0]["body"]
-    assert body["custom_logit_processor"] == "MyCustomProcessor:v2"
+    assert body["custom_logit_processor"] == other
     assert body["custom_params"] == {"thinking_budget": 64}
 
 
@@ -296,7 +334,8 @@ def test_cli_sglang_base_option(tmp_path, monkeypatch):
 
     monkeypatch.delenv("SGLANG_BASE", raising=False)
     args = _parse_cli(tmp_path, "--sglang-base", "http://explicit-host:30000",
-                      "--sglang-api", "chat", "--sglang-thinking-budget", "50")
+                      "--sglang-api", "chat", "--sglang-thinking-budget", "50",
+                      "--sglang-custom-logit-processor", VALID_PROCESSOR)
     client = build_client(args)
     assert client.endpoint == "http://explicit-host:30000"
     assert client.api_mode == "chat"
@@ -315,12 +354,14 @@ def test_cli_sglang_custom(tmp_path):
     from audio_style_workflow.main import build_client
 
     args = _parse_cli(tmp_path, "--sglang", "http://gpu-box:30000", "--sglang-api", "chat",
-                      "--sglang-thinking-budget", "50", "--max-new-tokens", "1024")
+                      "--sglang-thinking-budget", "50", "--max-new-tokens", "1024",
+                      "--sglang-custom-logit-processor", VALID_PROCESSOR)
     client = build_client(args)
     assert client.endpoint == "http://gpu-box:30000"
     assert client.api_mode == "chat"
     assert client.thinking_budget == 50
     assert client.max_new_tokens == 1024
+    assert client.custom_logit_processor == VALID_PROCESSOR
 
 
 def test_cli_sglang_conflicts_with_local_and_mock(tmp_path):

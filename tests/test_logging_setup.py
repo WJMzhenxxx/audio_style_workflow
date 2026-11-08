@@ -128,12 +128,15 @@ def test_recorder_records_error(tmp_path):
 
 
 def test_describe_request_collects_client_metadata(tmp_path):
+    import json as _json
+
     from audio_style_workflow.api.sglang_client import SglangMusicClient
 
     audio = tmp_path / "x.flac"
     audio.write_bytes(b"abc")
     client = SglangMusicClient(endpoint="http://h:30000", api_mode="chat",
-                              thinking_budget=50, max_new_tokens=1024)
+                              thinking_budget=50, max_new_tokens=1024,
+                              custom_logit_processor=_json.dumps({"callable": "beef"}))
     info = describe_request(audio, client)
     assert info["client"] == "sglang-music"
     assert info["endpoint"] == "http://h:30000"

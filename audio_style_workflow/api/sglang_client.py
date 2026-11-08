@@ -36,15 +36,20 @@
 若部署在不同机器，请用 NFS/SSHFS 挂载，或改用上传型实现
 （HttpSongAnalysisClient）。
 
-thinking budget 说明：设置 ``thinking_budget`` 时自动附带
-``separate_reasoning`` 与 ``custom_logit_processor``；processor 字符串默认
-取 ``Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str()`` 的惯用值，
-如你的 sglang 版本 ``to_str()`` 输出不同，用 ``custom_logit_processor``
-参数显式覆盖（或本机装 sglang 后把 ``to_str()`` 结果传入）。
+thinking budget 说明：设置 ``thinking_budget`` 时必须同时提供
+``custom_logit_processor`` 的**序列化字符串**——即
+``Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str()`` 的 JSON 输出
+（内含 dill 序列化的 callable）。解析顺序：显式参数 >
+环境变量 ``SGLANG_CUSTOM_LOGIT_PROCESSOR`` > 本机 sglang 的 ``to_str()``。
+三者都拿不到时**直接报错**，绝不把裸类名发给服务端：sglang 会
+``orjson.loads`` 该字段，传类名会让 scheduler 抛 JSONDecodeError 崩溃。
+另需服务端以 ``--enable-custom-logit-processor`` 启动。
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -56,9 +61,107 @@ from .base import SongAnalysisClient, SongAnalysisError
 logger = logging.getLogger(__name__)
 
 DEFAULT_SGLANG_BASE = "http://localhost:30000"
-DEFAULT_THINKING_PROCESSOR = "Qwen3InstructionInjectionThinkingBudgetLogitProcessor"
+
+#: OpenMOSS (MOSS-Music) sglang 分支里的 thinking budget 处理器类名。
+#: 注意：请求里必须传 ``to_str()`` 产出的 **JSON 字符串**（内含 dill 序列化
+#: 的 callable），不能传类名——服务端会用 ``orjson.loads`` 解析，传类名会直接
+#: 让 sglang scheduler 崩溃。
+THINKING_PROCESSOR_CLASS = "Qwen3InstructionInjectionThinkingBudgetLogitProcessor"
+SGLANG_PROCESSOR_MODULE = "sglang.srt.sampling.custom_logit_processor"
+#: 直接提供序列化串的环境变量（避免在命令行里粘贴超长字符串）
+ENV_CUSTOM_LOGIT_PROCESSOR = "SGLANG_CUSTOM_LOGIT_PROCESSOR"
 
 ApiMode = Literal["generate", "chat"]
+
+
+class ProcessorResolveError(ValueError):
+    """无法得到可用的 custom_logit_processor 序列化串。"""
+
+
+def _read_processor_value(value: str) -> str:
+    """支持 ``@path/to/file`` 形式：从文件读取序列化串。"""
+    value = (value or "").strip()
+    if value.startswith("@"):
+        path = Path(value[1:]).expanduser()
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ProcessorResolveError(f"读取 custom_logit_processor 文件失败: {path}: {exc}") from exc
+    return value
+
+
+def validate_processor_string(value: str) -> str:
+    """校验自定义 logit processor 是否是 sglang 能解析的 JSON 对象。
+
+    服务端 ``CustomLogitProcessor.from_str`` 会执行 ``orjson.loads(json_str)``，
+    因此非 JSON 字符串（例如误传类名）会让服务端抛异常甚至崩溃。这里提前拦截。
+    """
+    value = _read_processor_value(value)
+    if not value:
+        raise ProcessorResolveError("custom_logit_processor 不能为空")
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ProcessorResolveError(
+            "custom_logit_processor 不是合法 JSON（sglang 服务端会 orjson.loads 解析它）。"
+            "不要传类名，请传 `Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str()` "
+            f"的输出。解析错误: {exc}"
+        ) from exc
+    if not isinstance(data, dict) or not data:
+        raise ProcessorResolveError(
+            f"custom_logit_processor 应为非空 JSON 对象，实际为 {type(data).__name__}"
+        )
+    return value
+
+
+def _load_processor_from_sglang() -> Optional[str]:
+    """本机若装了 OpenMOSS sglang 分支，直接调用 ``to_str()`` 获取序列化串。"""
+    try:
+        module = __import__(SGLANG_PROCESSOR_MODULE, fromlist=[THINKING_PROCESSOR_CLASS])
+    except Exception:
+        return None
+    processor_cls = getattr(module, THINKING_PROCESSOR_CLASS, None)
+    if processor_cls is None:
+        return None
+    try:
+        return processor_cls.to_str()
+    except Exception as exc:  # pragma: no cover - 取决于本机 sglang 状态
+        logger.warning("调用 %s.to_str() 失败: %s", THINKING_PROCESSOR_CLASS, exc)
+        return None
+
+
+def resolve_thinking_processor(explicit: Optional[str] = None) -> str:
+    """得到 thinking budget 处理器的序列化字符串（并校验为 JSON）。
+
+    解析顺序：显式参数 > 环境变量 ``SGLANG_CUSTOM_LOGIT_PROCESSOR`` >
+    本机 sglang 的 ``to_str()``。全部不可用时抛 :class:`ProcessorResolveError`，
+    而不是把类名发给服务端（那会导致 sglang 崩溃）。
+    """
+    candidate = explicit or os.environ.get(ENV_CUSTOM_LOGIT_PROCESSOR)
+    if candidate:
+        return validate_processor_string(candidate)
+
+    from_sglang = _load_processor_from_sglang()
+    if from_sglang:
+        return validate_processor_string(from_sglang)
+
+    raise ProcessorResolveError(
+        "无法获取 thinking budget 的 custom_logit_processor 序列化串。\n"
+        "该值是 sglang（OpenMOSS/moss-audio 分支）里 "
+        "`Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str()` 的 JSON 输出，"
+        "内含 dill 序列化数据，必须由与服务端一致的 sglang 版本生成，不能手写类名"
+        "（否则会让 sglang scheduler 崩溃）。\n"
+        "解决办法（二选一）：\n"
+        "  1) 在装有该 sglang 分支的环境执行：\n"
+        "       python -c \"from sglang.srt.sampling.custom_logit_processor import "
+        "Qwen3InstructionInjectionThinkingBudgetLogitProcessor as P; "
+        "print(P.to_str())\"\n"
+        f"     把输出通过 --sglang-custom-logit-processor 传入、或写入文件后用 "
+        f"--sglang-custom-logit-processor @processor.txt，或设置环境变量 "
+        f"{ENV_CUSTOM_LOGIT_PROCESSOR}；\n"
+        "  2) 去掉 thinking budget（不传 --sglang-thinking-budget）。\n"
+        "另请确认服务端以 --enable-custom-logit-processor 启动。"
+    )
 
 
 class SglangMusicClient(SongAnalysisClient):
@@ -102,9 +205,11 @@ class SglangMusicClient(SongAnalysisClient):
         self.temperature = float(temperature)
         self.model_name = model_name
         self.thinking_budget = int(thinking_budget) if thinking_budget is not None else None
-        self.custom_logit_processor = (
-            custom_logit_processor or DEFAULT_THINKING_PROCESSOR
-        ) if self.thinking_budget is not None else custom_logit_processor
+        # thinking_budget 需要合法的 processor 序列化串；解析/校验失败立即报错，
+        # 避免把非法值发给服务端导致其崩溃。
+        self.custom_logit_processor: Optional[str] = None
+        if self.thinking_budget is not None:
+            self.custom_logit_processor = resolve_thinking_processor(custom_logit_processor)
 
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -202,7 +307,7 @@ class SglangMusicClient(SongAnalysisClient):
         }
         if self.thinking_budget is not None:
             body["separate_reasoning"] = True
-            body["custom_logit_processor"] = self.custom_logit_processor or DEFAULT_THINKING_PROCESSOR
+            body["custom_logit_processor"] = self.custom_logit_processor
             body["custom_params"] = {"thinking_budget": self.thinking_budget}
 
         raw = self._post(self._url_chat, body, field_hint="choices[0].message.content")

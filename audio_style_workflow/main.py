@@ -57,6 +57,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     client.add_argument("--sglang-base", default=None, metavar="BASE_URL", help="显式指定 sglang 服务基地址（等价于 --sglang BASE_URL；也可用环境变量 SGLANG_BASE）")
     client.add_argument("--sglang-api", choices=["generate", "chat"], default="generate", help="sglang API 模式：generate=/generate 基础模式；chat=/v1/chat/completions（OpenAI 兼容）")
     client.add_argument("--sglang-thinking-budget", type=int, default=None, metavar="N", help="chat 模式下开启 thinking 分离并限制思考 token 数（如 50）")
+    client.add_argument("--sglang-custom-logit-processor", default=os.environ.get("SGLANG_CUSTOM_LOGIT_PROCESSOR"), metavar="JSON_OR_@FILE", help="thinking budget 所需的 custom_logit_processor 序列化串（Qwen3InstructionInjectionThinkingBudgetLogitProcessor.to_str() 的输出）；也可写 @文件路径，或设环境变量 SGLANG_CUSTOM_LOGIT_PROCESSOR")
     client.add_argument("--model-id", default=os.environ.get("SONG_ANALYZER_MODEL_ID", "nvidia/music-flamingo-2601-hf"), help="本地 MusicFlamingo 模型 ID（配合 --local）")
     client.add_argument("--max-new-tokens", type=int, default=500, help="模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024）")
     client.add_argument("--concurrency", type=int, default=1, help="分析端点并发请求数（本地模型会自动串行化）")
@@ -104,6 +105,7 @@ def build_client(args: argparse.Namespace):
             api_mode=args.sglang_api,
             thinking_budget=args.sglang_thinking_budget,
             max_new_tokens=args.max_new_tokens,
+            custom_logit_processor=args.sglang_custom_logit_processor,
         )
     if args.local:
         logger.info("已选择本地模型分析（忽略 --endpoint）")
