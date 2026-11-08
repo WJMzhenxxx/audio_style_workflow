@@ -66,6 +66,8 @@ class WorkflowConfig:
     log_dir: Optional[Path] = None
     #: 是否把提取到的 BPM / Tempo / Key 写回标签
     write_musical_tags: bool = True
+    #: 逐曲闭环：每首分析完立即解析并写标签/记扫描记录（默认 False = 分阶段批处理）
+    per_song: bool = False
 
 
 @dataclass
@@ -330,13 +332,19 @@ def _analysis_meta(analysis: Any) -> dict[str, Any]:
     return parsed
 
 
-def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser) -> PipelineState:
+def step_parse(
+    state: PipelineState,
+    config: WorkflowConfig,
+    parser: StyleParser,
+    recorder: Optional[AnalysisDetailRecorder] = None,
+) -> PipelineState:
     """从分析响应中提取风格（JSON 优先，LLM 兜底）。
 
     若 ``config.log_dir`` 已设置，解析出风格后把完整评价写入
     ``<log_dir>/Genre description/*.txt``。
     """
-    recorder = AnalysisDetailRecorder(config.log_dir) if config.log_dir is not None else None
+    if recorder is None and config.log_dir is not None:
+        recorder = AnalysisDetailRecorder(config.log_dir)
     for task in state.tasks:
         if task.error or task.skip_reason or task.analysis is None:
             continue
@@ -461,6 +469,57 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
 # ----------------------------------------------------------------------
 # 组装与运行
 # ----------------------------------------------------------------------
+def step_per_song(
+    state: PipelineState,
+    config: WorkflowConfig,
+    client: SongAnalysisClient,
+    parser: StyleParser,
+    store: Optional[ScanStateStore] = None,
+) -> PipelineState:
+    """逐曲闭环：每首歌分析 -> 解析 -> 写标签 -> 记扫描记录，立刻完成。
+
+    与分阶段批处理（analyze 全部跑完再 parse、再 tag）相比，中断时已完成的
+    歌曲都已落盘，代价是无法先看到全部分析结果再统一写。
+    """
+    recorder = AnalysisDetailRecorder(config.log_dir) if config.log_dir is not None else None
+
+    pending: list[TrackTask] = []
+    for task in state.tasks:
+        if task.skip_reason:
+            continue
+        if store is not None and store.is_scanned(task.path):
+            task.skip_reason = f"{ScanStateStore.SKIP_PREFIX}（指纹一致）"
+            logger.debug("[state] %s 命中扫描记录，跳过", task.path.name)
+            continue
+        pending.append(task)
+
+    if not pending:
+        logger.info("没有需要分析的歌曲（全部跳过）")
+        return state
+
+    logger.info("逐曲模式：%d 首待处理（每首分析完立即写标签）", len(pending))
+    for index, task in enumerate(pending, 1):
+        # 分析（顺带写 details 明细）
+        _analyze_one(task, client, recorder)
+
+        # 解析 + 写标签：复用批处理的同一套逻辑，只是状态里只有这一首
+        single = PipelineState(tasks=[task], albums=state.albums, warnings=state.warnings)
+        step_parse(single, config, parser, recorder)
+        step_tag(single, config, store)
+
+        if task.error:
+            logger.info("[%d/%d] %s 失败: %s", index, len(pending), task.path.name, task.error)
+        elif task.skip_reason:
+            logger.info("[%d/%d] %s 跳过: %s", index, len(pending), task.path.name, task.skip_reason)
+        else:
+            logger.info(
+                "[%d/%d] %s 完成: styles=%s BPM=%s Mood=%s Score=%s tagged=%s",
+                index, len(pending), task.path.name,
+                "/".join(task.styles) or "-", task.bpm, task.mood, task.score, task.tagged,
+            )
+    return state
+
+
 def build_workflow(
     client: SongAnalysisClient,
     style_parser: StyleParser,
@@ -469,10 +528,22 @@ def build_workflow(
     splitter: Optional[TtaSplitter] = None,
     store: Optional[ScanStateStore] = None,
 ) -> RunnableSequence:
-    """把五个步骤组装为 LangChain RunnableSequence。"""
-    return (
+    """组装 LangChain RunnableSequence。
+
+    ``config.per_song=True`` 时把 analyze/parse/tag 合并成一个逐曲步骤，
+    否则保持五段式分阶段批处理。
+    """
+    head = (
         RunnableLambda(lambda _: step_scan(_, config), name="scan")
         | RunnableLambda(lambda state: step_split(state, config, splitter, store), name="split_tta")
+    )
+    if config.per_song:
+        return head | RunnableLambda(
+            lambda state: step_per_song(state, config, client, style_parser, store),
+            name="per_song",
+        )
+    return (
+        head
         | RunnableLambda(lambda state: step_analyze(state, config, client, store), name="analyze")
         | RunnableLambda(lambda state: step_parse(state, config, style_parser), name="parse_styles")
         | RunnableLambda(lambda state: step_tag(state, config, store), name="write_tags")

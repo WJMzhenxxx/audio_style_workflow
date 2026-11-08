@@ -282,10 +282,25 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--concurrency` | 分析端点并发请求数（本地模型自动串行化） |
 | `--llm-model` | 启用 LLM 兜底解析非结构化响应（需 `langchain-openai` + `OPENAI_API_KEY`） |
 | `--log-dir DIR` | 日志目录，默认 `log`（或环境变量 `SONG_ANALYZER_LOG_DIR`） |
+| `--per-song` | 逐曲闭环：每首分析完立即解析并写标签、记扫描记录 |
 
 环境变量：`SONG_ANALYZER_ENDPOINT`、`SONG_ANALYZER_API_KEY`、
 `SONG_ANALYZER_FILE_FIELD`、`SONG_ANALYZER_LLM_MODEL`、`FFMPEG_PATH`、
 `SGLANG_BASE`、`SGLANG_CUSTOM_LOGIT_PROCESSOR`、`SONG_ANALYZER_LOG_DIR`。
+
+## 两种执行模式
+
+| | 分阶段批处理（默认） | 逐曲闭环（`--per-song`） |
+| --- | --- | --- |
+| 顺序 | 先全部调用 MOSS → 再统一解析 → 再统一写标签 | 每首：分析 → 解析 → 写标签 → 记扫描记录 |
+| 中断后 | 已分析但未写标签的成果会丢，重跑需重新分析 | 已完成的歌曲都已落盘，重跑直接命中 `skip-scanned` |
+| 全局视角 | 可先看全部分析结果再统一写 | 无法先汇总再决定 |
+| 并发 | `--concurrency` 在本阶段内并行 | 天然串行（忽略 `--concurrency`） |
+
+```bash
+# 逐曲闭环，适合大批量、可能被打断的场景
+python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-base64 --per-song
+```
 
 ## 日志与逐曲分析明细
 

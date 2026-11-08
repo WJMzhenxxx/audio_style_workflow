@@ -665,3 +665,10 @@ def test_cli_prompt_lang(tmp_path):
 
     en_client = build_client(_parse_cli(tmp_path, "--sglang", "http://h:1", "--prompt-lang", "en"))
     assert "Listen to this track" in en_client.prompt
+
+
+def test_cli_per_song_flag(tmp_path):
+    from audio_style_workflow.main import build_arg_parser
+
+    assert build_arg_parser().parse_args([str(tmp_path), "--per-song"]).per_song is True
+    assert build_arg_parser().parse_args([str(tmp_path)]).per_song is False

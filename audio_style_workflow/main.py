@@ -79,6 +79,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     state.add_argument("--skip-scanned", action="store_true", help="跳过扫描记录中已成功处理且未变化的歌曲（TTA 专辑整张跳过切分；文件变动后自动重处理）")
     state.add_argument("--state-file", type=Path, default=os.environ.get("SONG_ANALYZER_STATE_FILE"), help="扫描记录文件路径（默认 <root>/.audio_style_scan.json）")
     state.add_argument("--reset-state", action="store_true", help="运行前清空扫描记录（重新全量处理）")
+    state.add_argument("--per-song", dest="per_song", action="store_true",
+                       help="逐曲闭环：每首分析完立即解析并写标签、记扫描记录（默认先全部分析再统一写）")
 
     split = parser.add_argument_group("TTA 切分")
     split.add_argument("--split-dir", type=Path, default=None, help="分轨输出目录（默认与 TTA 整轨同目录）")
@@ -207,6 +209,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         reuse_split_tracks=not args.resplit,
         log_dir=log_paths.root,
         write_musical_tags=getattr(args, "musical_tags", True),
+        per_song=getattr(args, "per_song", False),
     )
 
     print(f"目标目录 : {config.root}")

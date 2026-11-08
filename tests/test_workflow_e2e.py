@@ -329,3 +329,38 @@ def test_musical_tags_can_be_disabled(library):
     assert report.tagged == 5
     for task in report.tasks:
         assert read_extra_tags(task.path)["bpm"] is None
+
+
+# ------------------------------------------------------------------
+# 逐曲闭环模式
+# ------------------------------------------------------------------
+def test_build_workflow_per_song_shape(library):
+    from audio_style_workflow.workflow import build_workflow
+
+    wf = build_workflow(
+        MockSongAnalysisClient(), StyleParser(),
+        WorkflowConfig(root=library, per_song=True),
+    )
+    assert [step.name for step in wf.steps] == ["scan", "split_tta", "per_song"]
+
+
+def test_per_song_tags_incrementally(library):
+    """逐曲模式：分析下一首之前，上一首的标签已写好。"""
+    seen_counts = []
+
+    class Recorder(MockSongAnalysisClient):
+        def analyze(self, audio_path):
+            seen_counts.append(
+                sum(1 for p in library.rglob("*")
+                    if p.is_file() and get_styles(p, key="GENRE"))
+            )
+            return super().analyze(audio_path)
+
+    config = WorkflowConfig(root=library, per_song=True, skip_scanned=True)
+    report = run_workflow(Recorder(), StyleParser(), config)
+
+    assert report.tagged == 5
+    assert report.failed == []
+    # 每进入下一首时，已完成数量单调递增
+    assert seen_counts == sorted(seen_counts)
+    assert seen_counts[-1] >= 4
