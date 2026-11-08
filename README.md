@@ -148,6 +148,27 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang http://10.0.0.5:4
 `http://localhost:30000`；`--sglang-base BASE_URL` 是显式指定地址的等价形式
 （优先级最高）。推理结果统一解析为 `styles` + `description`，下游流程不变。
 
+#### `content` 为 null（答案落在 `reasoning_content`）
+
+thinking 模型（或 chat 模板默认开启 thinking 时）常见现象：思考段没闭合就用完了
+`max_tokens`，于是 `content: null`，真正的答案全在 `reasoning_content` 里。
+客户端会**自动回退**使用 `reasoning_content`，并在分析明细里标注
+`content_source: "reasoning_content"`；日志同时打一条 warning。
+
+根因仍然是"思考太长"，可选处置：
+
+```bash
+# 1) 增大正文预算，让思考自然闭合并写出 content
+--max-new-tokens 4096
+
+# 2) 用 thinking budget 强制思考收尾（需服务端 --enable-custom-logit-processor）
+--sglang-thinking-budget 0 --sglang-custom-logit-processor @processor.json
+
+# 3) 让 prompt 只要求风格标签，减少无谓的描述
+```
+
+> `--sglang-thinking-budget 0` 表示"不允许思考"，会立即闭合思考段，对打标签最快。
+
 ### 本地模型分析（离线推理，MusicFlamingo）
 
 不依赖任何 HTTP 服务，用本地 transformers 权重直接推理（GPU 推荐，自动 `device_map=auto`）：

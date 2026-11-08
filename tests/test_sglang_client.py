@@ -248,6 +248,34 @@ def test_chat_mode_missing_choices(audio_file):
     assert "choices" in str(err.value)
 
 
+def test_chat_mode_falls_back_to_reasoning_content(audio_file):
+    """回归：思考未闭合时 content=null，答案在 reasoning_content，不能直接判失败。"""
+    transport = RecordingTransport({"choices": [{"index": 0, "message": {
+        "role": "assistant",
+        "content": None,
+        "reasoning_content": "Genre: Pop, R&B\n\nTempo: 慢板\n\nKey: C major",
+    }}]})
+    client = SglangMusicClient(api_mode="chat", transport=transport)
+    payload = client.analyze(audio_file)
+
+    assert payload["content_source"] == "reasoning_content"
+    assert payload["styles"] == ["Pop", "R&B"]
+    assert payload["description"].startswith("Genre: Pop, R&B")
+    # 下游 StyleParser 同样能解析
+    styles, source, _ = StyleParser().parse(payload)
+    assert styles == ["Pop", "R&B"] and source == "json"
+
+
+def test_chat_mode_prefers_content_over_reasoning(audio_file):
+    transport = RecordingTransport({"choices": [{"message": {
+        "content": "Jazz, Lofi\nanswer",
+        "reasoning_content": "internal thoughts",
+    }}]})
+    payload = SglangMusicClient(api_mode="chat", transport=transport).analyze(audio_file)
+    assert payload["content_source"] == "content"
+    assert payload["styles"] == ["Jazz", "Lofi"]
+
+
 def test_chat_mode_auto_degrades_when_server_rejects_processor(audio_file):
     """服务端未开 --enable-custom-logit-processor 时，自动去掉 budget 字段重试。"""
     calls = []

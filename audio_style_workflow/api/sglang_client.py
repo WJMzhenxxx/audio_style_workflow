@@ -274,8 +274,9 @@ class SglangMusicClient(SongAnalysisClient):
         if self.api_mode == "generate":
             text, raw_response = self._analyze_via_generate(audio_url)
             reasoning = None
+            content_source = "text"
         else:
-            text, reasoning, raw_response = self._analyze_via_chat(audio_url)
+            text, reasoning, raw_response, content_source = self._analyze_via_chat(audio_url)
 
         payload: dict[str, Any] = {
             "status": "ok",
@@ -283,6 +284,8 @@ class SglangMusicClient(SongAnalysisClient):
             "endpoint": self.endpoint,
             "api_mode": self.api_mode,
             "description": text.strip(),
+            # content / reasoning_content（思考未闭合时只能从后者取答案）
+            "content_source": content_source,
             # 保留服务端原始响应（原始输出），供分析明细与排查使用
             "raw_response": raw_response,
         }
@@ -321,7 +324,9 @@ class SglangMusicClient(SongAnalysisClient):
     # ------------------------------------------------------------------
     # chat 模式（OpenAI 兼容 + thinking 分离 + budget 控制）
     # ------------------------------------------------------------------
-    def _analyze_via_chat(self, audio_url: str) -> tuple[str, Optional[str], dict[str, Any]]:
+    def _analyze_via_chat(
+        self, audio_url: str
+    ) -> tuple[str, Optional[str], dict[str, Any], str]:
         body: dict[str, Any] = {
             "model": self.model_name,
             "messages": [
@@ -357,13 +362,28 @@ class SglangMusicClient(SongAnalysisClient):
             raise SongAnalysisError(f"sglang /v1/chat/completions 响应缺少 choices: {_preview(raw)}")
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
-            raise SongAnalysisError(f"响应缺少 content 字段: {_preview(raw)}")
         reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
-        if isinstance(reasoning, str) and reasoning.strip():
-            logger.debug("[sglang] thinking 分离输出(%d 字符)已保留在 raw_response/reasoning", len(reasoning))
-            return content, reasoning, raw
-        return content, None, raw
+
+        has_content = isinstance(content, str) and content.strip()
+        has_reasoning = isinstance(reasoning, str) and reasoning.strip()
+
+        if has_content:
+            return content, (reasoning if has_reasoning else None), raw, "content"
+
+        if has_reasoning:
+            # thinking 模型常见：思考未闭合（思考段吃光 max_tokens）时 content 为 null，
+            # 真正的答案落在 reasoning_content 里。直接失败会白白丢掉可用结果。
+            logger.warning(
+                "[sglang] 响应 content 为空（多为思考段未闭合 / max_tokens 被思考耗尽），"
+                "回退使用 reasoning_content（%d 字符）；如需正常 content，"
+                "可增大 --max-new-tokens 或启用 thinking budget 强制思考收尾",
+                len(reasoning),
+            )
+            return reasoning, reasoning, raw, "reasoning_content"
+
+        raise SongAnalysisError(
+            f"响应缺少 content 与 reasoning_content 字段: {_preview(raw)}"
+        )
 
     # ------------------------------------------------------------------
     # 传输
