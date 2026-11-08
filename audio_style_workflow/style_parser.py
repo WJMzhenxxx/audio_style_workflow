@@ -41,12 +41,16 @@ _MAX_STYLES = 8
 # ======================================================================
 # 本地/自托管生成式音乐模型（MusicFlamingo、sglang 部署模型等）共用辅助件
 # ======================================================================
-#: 引导模型把风格标签写在第一行（便于确定性解析），后续行输出完整描述
+#: 引导模型把风格/速度/调性写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
-    "Listen to this track and analyze it. On the FIRST line, list its musical "
-    "styles/genres as a short comma-separated line (for example: Pop, R&B, Jazz). "
-    "Then describe in full detail the genre, tempo, key, instruments, production "
-    "style, and the overall mood it creates."
+    "Listen to this track and analyze it. Reply in this exact format:\n"
+    "Line 1: its musical styles/genres as a short comma-separated list "
+    "(for example: Pop, R&B, Jazz).\n"
+    "Line 2: BPM: <integer beats per minute, e.g. 120>\n"
+    "Line 3: Tempo: <short tempo descriptor, e.g. Slow / Moderato / Fast>\n"
+    "Line 4: Key: <key signature, e.g. C major / A minor>\n"
+    "Then leave one blank line and describe in detail the genre, instruments, "
+    "production style and the overall mood it creates."
 )
 
 #: 解析风格标签的启发式参数
@@ -86,6 +90,141 @@ def extract_styles_from_text(text: str, *, limit: int = _MAX_LABELS) -> list[str
     if not (1 <= len(labels) <= _MAX_LABELS):
         return []
     return labels[:limit]
+
+
+# ----------------------------------------------------------------------
+# 音乐属性：BPM / Tempo / Key
+# ----------------------------------------------------------------------
+#: 单个属性的最大长度（放进标签不宜过长）
+_MAX_META_LEN = 48
+_BPM_MIN, _BPM_MAX = 20, 400
+
+#: 行首标签形式：``BPM: 120`` / ``速度：120``
+_BPM_LABEL_RE = re.compile(
+    r"^\s*(?:bpm|beats?\s*per\s*minute|速度|节拍)\s*[:：=\-—]?\s*(\d{2,3})\b",
+    re.IGNORECASE,
+)
+#: 行内形式：``120 BPM`` / ``around 128 bpm``
+_BPM_INLINE_RE = re.compile(r"(\d{2,3})\s*(?:bpm|beats?\s*per\s*minute)\b", re.IGNORECASE)
+#: ``Tempo: Moderato`` / ``速度：慢板``
+_TEMPO_LABEL_RE = re.compile(
+    r"^\s*(?:tempo|速度|节奏|节拍速度)\s*[:：=\-—]\s*(.+?)\s*$", re.IGNORECASE
+)
+#: ``Key: C major`` / ``调性：A小调``
+_KEY_LABEL_RE = re.compile(
+    r"^\s*(?:key|tonality|调性|调号|调)\s*[:：=\-—]\s*(.+?)\s*$", re.IGNORECASE
+)
+#: 纯 BPM 值（``120`` / ``120 BPM``），出现在 Tempo 标签后时按 BPM 处理
+_BPM_VALUE_RE = re.compile(r"^\s*(\d{2,3})(?:\s*bpm)?\s*$", re.IGNORECASE)
+#: 文本里直接出现的调性（``C major`` / ``F# minor`` / ``降B大调``）
+_KEY_INLINE_RE = re.compile(
+    r"\b([A-Ga-g][#b♯♭]?\s*(?:major|minor|maj|min))\b"
+    r"|([A-Ga-g][#b♯♭]?\s*(?:大调|小调))"
+)
+
+
+def _clean_meta_line(line: str) -> str:
+    """去掉 Markdown 装饰（``**``、``__``、反引号）与列表符号。"""
+    text = line.strip()
+    for token in ("**", "__", "`"):
+        text = text.replace(token, "")
+    return text.strip().lstrip("-•*>").strip()
+
+
+def _clean_meta_value(value: str) -> str:
+    return value.strip().strip("\"'“”‘’").strip().rstrip("。.,，;；").strip()
+
+
+def _valid_bpm(value: int) -> Optional[int]:
+    return value if _BPM_MIN <= value <= _BPM_MAX else None
+
+
+def _looks_like_key(value: str) -> bool:
+    if not value or len(value) > _MAX_META_LEN:
+        return False
+    if any(token in value for token in ("大调", "小调", "大調", "小調", "调", "調")):
+        return True
+    return bool(re.search(r"[A-Ga-g][#b♯♭]?", value)) and bool(
+        re.search(r"major|minor|maj|min", value, re.IGNORECASE)
+    )
+
+
+def extract_musical_meta(text: str) -> dict[str, Any]:
+    """从模型输出里提取 BPM / Tempo / Key（确定性解析，无需 LLM）。
+
+    支持带标签的写法（``BPM: 120`` / ``Tempo: 慢板`` / ``Key: C major``，
+    含中文标签 ``速度:`` / ``调性:``）以及行内写法（``120 BPM``、``F# minor``）。
+    未识别到的字段不会出现在返回值里。
+
+    :returns: 形如 ``{"bpm": 120, "tempo": "Moderato", "key": "C major"}``
+    """
+    if not text:
+        return {}
+
+    bpm: Optional[int] = None
+    tempo: Optional[str] = None
+    key: Optional[str] = None
+
+    for raw_line in text.splitlines():
+        line = _clean_meta_line(raw_line)
+        if not line:
+            continue
+
+        # --- 行首 BPM 标签 ---
+        if bpm is None:
+            match = _BPM_LABEL_RE.match(line)
+            if match:
+                bpm = _valid_bpm(int(match.group(1)))
+                if bpm is not None:
+                    continue
+
+        # --- 行内 x BPM（可能出现在同一行的其它描述里）---
+        if bpm is None:
+            match = _BPM_INLINE_RE.search(line)
+            if match:
+                bpm = _valid_bpm(int(match.group(1)))
+
+        # --- Tempo 标签（值是纯数字时归入 BPM）---
+        if tempo is None:
+            match = _TEMPO_LABEL_RE.match(line)
+            if match:
+                value = _clean_meta_value(match.group(1))
+                if value:
+                    bpm_only = _BPM_VALUE_RE.match(value)
+                    if bpm_only:
+                        if bpm is None:
+                            bpm = _valid_bpm(int(bpm_only.group(1)))
+                    else:
+                        tempo = value[:_MAX_META_LEN]
+                continue
+
+        # --- Key 标签 ---
+        if key is None:
+            match = _KEY_LABEL_RE.match(line)
+            if match:
+                value = _clean_meta_value(match.group(1))
+                if value and _looks_like_key(value):
+                    key = value[:_MAX_META_LEN]
+                continue
+
+    # 兜底：整段文本里找
+    if key is None:
+        match = _KEY_INLINE_RE.search(text)
+        if match:
+            key = (match.group(1) or match.group(2))[:_MAX_META_LEN]
+    if bpm is None:
+        match = _BPM_INLINE_RE.search(text)
+        if match:
+            bpm = _valid_bpm(int(match.group(1)))
+
+    result: dict[str, Any] = {}
+    if bpm is not None:
+        result["bpm"] = bpm
+    if tempo:
+        result["tempo"] = tempo
+    if key:
+        result["key"] = key
+    return result
 
 
 class StyleParseError(RuntimeError):

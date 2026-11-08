@@ -61,6 +61,9 @@ class TrackTask:
     styles: list[str] = field(default_factory=list)
     confidence: Optional[float] = None
     style_parser: Optional[str] = None           # "json" / "llm"
+    bpm: Optional[int] = None                    # 估计的每分钟节拍数
+    tempo: Optional[str] = None                  # 速度术语（Slow / Moderato / 慢板…）
+    key: Optional[str] = None                    # 调性（C major / A minor…）
     tagged: bool = False
     would_write: Optional[str] = None            # dry-run 模式下记录将要写入的值
     skip_reason: Optional[str] = None

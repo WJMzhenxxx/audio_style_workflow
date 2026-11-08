@@ -11,7 +11,18 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from mutagen.flac import FLAC
-from mutagen.id3 import ID3, ID3NoHeaderError, TALB, TIT2, TPE1, TPE2, TRCK, TXXX
+from mutagen.id3 import (
+    ID3,
+    ID3NoHeaderError,
+    TALB,
+    TBPM,
+    TIT2,
+    TKEY,
+    TPE1,
+    TPE2,
+    TRCK,
+    TXXX,
+)
 
 from .models import AudioFormat
 
@@ -19,6 +30,10 @@ from .models import AudioFormat
 DEFAULT_CUSTOM_KEY = "STYLE"
 #: 多风格默认连接符（写成单值，避免个别播放器把多值字段显示成两行）
 DEFAULT_JOINER = "; "
+#: 音乐属性标签键名（FLAC VorbisComment；MP3 见 _write 内映射）
+DEFAULT_BPM_KEY = "BPM"
+DEFAULT_TEMPO_KEY = "TEMPO"
+DEFAULT_KEY_KEY = "KEY"
 
 _MAX_KEY_LEN = 60
 
@@ -105,6 +120,120 @@ def get_styles(path: Path, *, key: str = DEFAULT_CUSTOM_KEY) -> Optional[str]:
     except Exception:
         return None
     return None
+
+
+def write_extra_tags(
+    path: Path,
+    *,
+    bpm: Optional[int] = None,
+    tempo: Optional[str] = None,
+    key: Optional[str] = None,
+    tempo_key: str = DEFAULT_TEMPO_KEY,
+) -> dict[str, str]:
+    """把 BPM / Tempo / Key 写入音频标签，返回实际写入的字段。
+
+    - FLAC：VorbisComment ``BPM`` / ``TEMPO`` / ``KEY``
+    - MP3 ：标准帧 ``TBPM`` / ``TKEY``，Tempo 用 ``TXXX:TEMPO``
+
+    三个值都为空时不做任何写入（返回空 dict）；单个值非法只会被跳过。
+    """
+    path = Path(path)
+    tempo_key = _check_key(tempo_key)
+    written: dict[str, str] = {}
+
+    bpm_value: Optional[str] = None
+    if bpm is not None:
+        try:
+            bpm_int = int(bpm)
+        except (TypeError, ValueError):
+            bpm_int = -1
+        if 1 <= bpm_int <= 400:
+            bpm_value = str(bpm_int)
+    tempo_value = (tempo or "").strip() or None
+    key_value = (key or "").strip() or None
+
+    if bpm_value is None and tempo_value is None and key_value is None:
+        return written
+
+    fmt = AudioFormat.from_path(path)
+    try:
+        if fmt is AudioFormat.FLAC:
+            audio = FLAC(str(path))
+            if bpm_value is not None:
+                audio[DEFAULT_BPM_KEY] = [bpm_value]
+                written["bpm"] = bpm_value
+            if tempo_value is not None:
+                audio[tempo_key] = [tempo_value]
+                written["tempo"] = tempo_value
+            if key_value is not None:
+                audio[DEFAULT_KEY_KEY] = [key_value]
+                written["key"] = key_value
+            audio.save()
+        elif fmt is AudioFormat.MP3:
+            try:
+                tags = ID3(str(path))
+            except ID3NoHeaderError:
+                tags = ID3()
+            if bpm_value is not None:
+                tags.setall("TBPM", [TBPM(encoding=3, text=bpm_value)])
+                written["bpm"] = bpm_value
+            if key_value is not None:
+                tags.setall("TKEY", [TKEY(encoding=3, text=key_value)])
+                written["key"] = key_value
+            if tempo_value is not None:
+                tags.setall(
+                    f"TXXX:{tempo_key}",
+                    [TXXX(encoding=3, desc=tempo_key, text=tempo_value)],
+                )
+                written["tempo"] = tempo_value
+            tags.save(str(path), v2_version=4)
+        else:
+            raise TaggerError(f"暂不支持向 {path.suffix or '<无后缀>'} 格式写音乐属性标签: {path}")
+    except TaggerError:
+        raise
+    except Exception as exc:  # mutagen 各种底层异常
+        raise TaggerError(f"写 {path.name} 的音乐属性标签失败: {exc}") from exc
+    return written
+
+
+def read_extra_tags(
+    path: Path, *, tempo_key: str = DEFAULT_TEMPO_KEY
+) -> dict[str, Optional[str]]:
+    """读取 BPM / Tempo / Key；缺失或读取失败返回 None（不抛异常）。"""
+    path = Path(path)
+    info: dict[str, Optional[str]] = {"bpm": None, "tempo": None, "key": None}
+    fmt = AudioFormat.from_path(path)
+    try:
+        if fmt is AudioFormat.FLAC:
+            audio = FLAC(str(path))
+
+            def _flac_first(tag_key: str) -> Optional[str]:
+                values = audio.get(tag_key)
+                if isinstance(values, list) and values:
+                    return str(values[0])
+                return None
+
+            info["bpm"] = _flac_first(DEFAULT_BPM_KEY)
+            info["tempo"] = _flac_first(tempo_key)
+            info["key"] = _flac_first(DEFAULT_KEY_KEY)
+        elif fmt is AudioFormat.MP3:
+            try:
+                tags = ID3(str(path))
+            except ID3NoHeaderError:
+                return info
+
+            def _frame_first(frame_name: str) -> Optional[str]:
+                frames = tags.getall(frame_name)
+                if frames and getattr(frames[0], "text", None):
+                    return str(frames[0].text[0])
+                return None
+
+            info["bpm"] = _frame_first("TBPM")
+            info["key"] = _frame_first("TKEY")
+            info["tempo"] = _frame_first(f"TXXX:{tempo_key}")
+    except Exception:
+        return info
+    return info
 
 
 def write_basic_tags(

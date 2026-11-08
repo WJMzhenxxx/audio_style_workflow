@@ -196,6 +196,7 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | `--file-field` | 上传字段名，默认 `file` |
 | `--custom-tag` | 自定义风格标签键名，默认 `STYLE`（FLAC 直接字段；MP3 写 `TXXX:STYLE`） |
 | `--joiner` | 多风格连接符，默认 `"; "` |
+| `--no-musical-tags` | 不写入 BPM/Tempo/Key 标签（默认写入） |
 | `--skip-tagged` | 跳过已有该自定义标签的歌曲（依据文件内标签） |
 | `--skip-scanned` | 跳过扫描记录中已成功处理且未变化的歌曲（TTA 专辑整张跳过切分；文件变动后自动重处理） |
 | `--state-file` | 扫描记录文件路径，默认 `<root>/.audio_style_scan.json` |
@@ -351,6 +352,19 @@ dry-run 模式不读也不写扫描记录，保持预览无副作用。
 | --- | --- | --- |
 | FLAC | VorbisComment 自由字段 `STYLE` | `ffprobe file.flac 2>&1 \| findstr STYLE` |
 | MP3 | ID3v2.4 `TXXX:STYLE` 用户文本帧 | foobar2000 Columns UI / mp3tag 均可读 |
+
+除风格外，还会写入从模型输出里提取的 **BPM / Tempo / Key**（可用
+`--no-musical-tags` 关闭）：
+
+| 属性 | FLAC (VorbisComment) | MP3 (ID3v2.4) | 示例 |
+| --- | --- | --- | --- |
+| BPM | `BPM` | 标准帧 `TBPM` | `120` |
+| Tempo | `TEMPO` | `TXXX:TEMPO` | `Moderato` / `慢板` |
+| Key | `KEY` | 标准帧 `TKEY` | `C major` / `A小调` |
+
+提取是**确定性的**（无需 LLM）：既认带标签的写法 `BPM: 120` / `Tempo: Moderato`
+/ `Key: C major`（含中文 `速度:` / `调性:`），也认行内写法 `120 BPM`、`F# minor`；
+BPM 限定在 20–400，越界视为无效。三个值都没提取到时不会写入任何额外字段。
 
 TTA 分轨额外会带上 `TITLE / ARTIST / ALBUM / ALBUMARTIST / TRACKNUMBER` 基础标签。
 

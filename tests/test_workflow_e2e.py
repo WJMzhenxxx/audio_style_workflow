@@ -279,3 +279,52 @@ def test_summary_shows_scanned_stats(library):
     text = "\n".join(run_workflow(MockSongAnalysisClient(), StyleParser(), config).summary_lines())
     assert "扫描记录命中 5" in text
     assert "1 张" in text  # 整张跳过切分的专辑数
+
+
+# ------------------------------------------------------------------
+# BPM / Tempo / Key 打标签
+# ------------------------------------------------------------------
+def test_musical_tags_written_for_all_tracks(library):
+    from audio_style_workflow.tagger import read_extra_tags
+
+    class MetaClient(SongAnalysisClient):
+        name = "meta"
+
+        def analyze(self, audio_path):
+            return {
+                "status": "ok",
+                "styles": ["Pop", "R&B"],
+                "description": "BPM: 120\nTempo: Moderato\nKey: C major",
+                "bpm": 120,
+                "tempo": "Moderato",
+                "key": "C major",
+            }
+
+    report = run_workflow(MetaClient(), StyleParser(), WorkflowConfig(root=library))
+    assert report.tagged == 5
+    for task in report.tasks:
+        assert task.bpm == 120
+        assert task.tempo == "Moderato"
+        assert task.key == "C major"
+        assert read_extra_tags(task.path) == {
+            "bpm": "120", "tempo": "Moderato", "key": "C major",
+        }
+
+
+def test_musical_tags_can_be_disabled(library):
+    from audio_style_workflow.tagger import read_extra_tags
+
+    class MetaClient(SongAnalysisClient):
+        name = "meta"
+
+        def analyze(self, audio_path):
+            return {
+                "status": "ok", "styles": ["Pop"],
+                "description": "BPM: 120", "bpm": 120,
+            }
+
+    config = WorkflowConfig(root=library, write_musical_tags=False)
+    report = run_workflow(MetaClient(), StyleParser(), config)
+    assert report.tagged == 5
+    for task in report.tasks:
+        assert read_extra_tags(task.path)["bpm"] is None

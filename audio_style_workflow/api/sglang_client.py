@@ -55,7 +55,11 @@ from typing import Any, Literal, Optional
 
 import httpx
 
-from ..style_parser import DEFAULT_ANALYSIS_PROMPT, extract_styles_from_text
+from ..style_parser import (
+    DEFAULT_ANALYSIS_PROMPT,
+    extract_musical_meta,
+    extract_styles_from_text,
+)
 from .base import SongAnalysisClient, SongAnalysisError
 
 logger = logging.getLogger(__name__)
@@ -301,6 +305,7 @@ class SglangMusicClient(SongAnalysisClient):
                 "未能从模型输出第一行解析出风格标签；已保留 description，"
                 "可配置 --llm-model 让 StyleParser 用 LLM 兜底提取"
             )
+        payload.update(extract_musical_meta(text))
         return payload
 
     # ------------------------------------------------------------------

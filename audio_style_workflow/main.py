@@ -66,6 +66,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     tags.add_argument("--custom-tag", default=DEFAULT_CUSTOM_KEY, help="自定义风格标签键名（FLAC: VorbisComment 字段 / MP3: TXXX 帧）")
     tags.add_argument("--joiner", default=DEFAULT_JOINER, help="多风格连接符")
     tags.add_argument("--skip-tagged", action="store_true", help="已含该自定义标签的歌曲跳过分析（依据文件内标签）")
+    tags.add_argument("--no-musical-tags", dest="musical_tags", action="store_false",
+                      help="不写入 BPM/Tempo/Key 标签（默认写入：FLAC BPM/TEMPO/KEY；MP3 TBPM/TKEY/TXXX:TEMPO）")
     tags.add_argument("--dry-run", action="store_true", help="只分析并展示将写入的标签，不落盘")
 
     state = parser.add_argument_group("扫描记录（skip-scanned 断点续跑）")
@@ -178,6 +180,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         concurrency=max(1, args.concurrency),
         reuse_split_tracks=not args.resplit,
         log_dir=log_paths.root,
+        write_musical_tags=getattr(args, "musical_tags", True),
     )
 
     print(f"目标目录 : {config.root}")

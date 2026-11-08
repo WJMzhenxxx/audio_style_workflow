@@ -29,8 +29,8 @@ from .models import PipelineState, TrackTask, TtaAlbum
 from .scanner import scan_directory
 from .splitter import SplitError, TtaSplitter
 from .state_store import ScanStateStore
-from .style_parser import StyleParser, StyleParseError
-from .tagger import TaggerError, get_styles, write_styles
+from .style_parser import StyleParser, StyleParseError, extract_musical_meta
+from .tagger import TaggerError, get_styles, write_extra_tags, write_styles
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +56,8 @@ class WorkflowConfig:
     #: 日志/明细目录；非 None 时为每首歌写 ``<log_dir>/details/*.json``
     #: （库里默认不产生文件，CLI 会默认传 ``log/``）
     log_dir: Optional[Path] = None
+    #: 是否把提取到的 BPM / Tempo / Key 写回标签
+    write_musical_tags: bool = True
 
 
 @dataclass
@@ -293,6 +295,17 @@ def _analysis_description(analysis: Any) -> Optional[str]:
     return None
 
 
+def _analysis_meta(analysis: Any) -> dict[str, Any]:
+    """取出 BPM / Tempo / Key：优先用响应里的结构化字段，否则从评价文本解析。"""
+    if not isinstance(analysis, dict):
+        return {}
+    meta = {k: analysis.get(k) for k in ("bpm", "tempo", "key") if analysis.get(k) is not None}
+    if meta:
+        return meta
+    description = _analysis_description(analysis)
+    return extract_musical_meta(description) if description else {}
+
+
 def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser) -> PipelineState:
     """从分析响应中提取风格（JSON 优先，LLM 兜底）。
 
@@ -318,6 +331,16 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
             source,
             f", 置信度 {confidence:.2f}" if confidence is not None else "",
         )
+
+        meta = _analysis_meta(task.analysis)
+        if meta:
+            task.bpm = meta.get("bpm")
+            task.tempo = meta.get("tempo")
+            task.key = meta.get("key")
+            logger.info(
+                "[meta] %s -> BPM=%s Tempo=%s Key=%s",
+                task.path.name, task.bpm, task.tempo, task.key,
+            )
         if recorder is not None:
             description = _analysis_description(task.analysis)
             if description:
@@ -336,8 +359,16 @@ def step_parse(state: PipelineState, config: WorkflowConfig, parser: StyleParser
     return state
 
 
+def _has_musical_meta(task: TrackTask) -> bool:
+    return bool(task.bpm is not None or task.tempo or task.key)
+
+
 def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanStateStore] = None) -> PipelineState:
     """把风格写回音频自定义标签；dry_run 只记录将写入的值。
+
+    若 ``config.write_musical_tags`` 为真，同时写入提取到的
+    BPM / Tempo / Key（FLAC: ``BPM``/``TEMPO``/``KEY``；
+    MP3: ``TBPM``/``TKEY`` + ``TXXX:TEMPO``）。
 
     写入成功后同时记入扫描状态（skip-scanned 机制的标记点）。
     """
@@ -347,12 +378,22 @@ def step_tag(state: PipelineState, config: WorkflowConfig, store: Optional[ScanS
         if config.dry_run:
             task.would_write = config.style_joiner.join(task.styles)
             logger.info("[dry-run] %s: 将写入 %s=%r", task.path.name, config.custom_tag_key, task.would_write)
+            if config.write_musical_tags and _has_musical_meta(task):
+                logger.info(
+                    "[dry-run] %s: 将写入 BPM=%s Tempo=%s Key=%s",
+                    task.path.name, task.bpm, task.tempo, task.key,
+                )
             continue
         try:
             task.would_write = write_styles(
                 task.path, task.styles, key=config.custom_tag_key, joiner=config.style_joiner
             )
             task.tagged = True
+            if config.write_musical_tags and _has_musical_meta(task):
+                written = write_extra_tags(
+                    task.path, bpm=task.bpm, tempo=task.tempo, key=task.key
+                )
+                logger.info("[tag] %s <= %s", task.path.name, written)
             if store is not None:
                 store.mark_scanned(task.path, styles=task.styles)
             logger.info(

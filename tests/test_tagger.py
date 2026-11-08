@@ -97,3 +97,43 @@ def test_get_styles_on_invalid_file(tmp_path):
     assert get_styles(bad, key="STYLE") is None  # 不应抛异常
     with pytest.raises(TaggerError):
         write_styles(bad, ["Pop"])  # 写入要如实报错
+
+
+# ----------------------------------------------------------------------
+# BPM / Tempo / Key 标签
+# ----------------------------------------------------------------------
+@pytest.fixture()
+def fresh_flac(tmp_path) -> object:
+    """每个用例一份干净 FLAC，避免模块级 fixture 互相污染。"""
+    out = tmp_path / "meta.flac"
+    subprocess.run(
+        [resolve_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "flac", str(out)],
+        capture_output=True, check=True,
+    )
+    return out
+
+
+def test_write_and_read_extra_tags_flac(fresh_flac):
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags
+
+    written = write_extra_tags(fresh_flac, bpm=118, tempo="Moderato", key="C major")
+    assert written == {"bpm": "118", "tempo": "Moderato", "key": "C major"}
+    assert read_extra_tags(fresh_flac) == {
+        "bpm": "118", "tempo": "Moderato", "key": "C major",
+    }
+
+
+def test_extra_tags_partial_and_empty(fresh_flac):
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags
+
+    assert write_extra_tags(fresh_flac, bpm=None, tempo="", key=None) == {}
+    assert write_extra_tags(fresh_flac, bpm=90) == {"bpm": "90"}
+    assert read_extra_tags(fresh_flac) == {"bpm": "90", "tempo": None, "key": None}
+
+
+def test_extra_tags_reject_invalid_bpm(fresh_flac):
+    from audio_style_workflow.tagger import read_extra_tags, write_extra_tags
+
+    assert write_extra_tags(fresh_flac, bpm=0, tempo=None, key=None) == {}
+    assert read_extra_tags(fresh_flac)["bpm"] is None

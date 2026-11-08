@@ -7,6 +7,7 @@ from audio_style_workflow.style_parser import (
     StyleParser,
     _extract_confidence,
     _extract_styles,
+    extract_musical_meta,
 )
 
 
@@ -108,3 +109,44 @@ def test_llm_fallback_empty_raises():
     parser = StyleParser(llm=FakeLLM())
     with pytest.raises(StyleParseError):
         parser.parse({"note": "无法识别"})
+
+
+# ----------------------------------------------------------------------
+# BPM / Tempo / Key 提取
+# ----------------------------------------------------------------------
+def test_meta_standard_labels():
+    text = "Genre: Pop, R&B\nBPM: 120\nTempo: Moderato\nKey: C major"
+    assert extract_musical_meta(text) == {"bpm": 120, "tempo": "Moderato", "key": "C major"}
+
+
+def test_meta_markdown_and_chinese_labels():
+    text = "**BPM:** 128\n**Tempo:** 快板\n**Key:** A小调"
+    meta = extract_musical_meta(text)
+    assert meta["bpm"] == 128
+    assert meta["tempo"] == "快板"
+    assert meta["key"] == "A小调"
+
+
+def test_meta_inline_bpm_and_key():
+    meta = extract_musical_meta("The track is around 95 BPM in F# minor.")
+    assert meta["bpm"] == 95
+    assert meta["key"] == "F# minor"
+
+
+def test_meta_chinese_inline_labels():
+    meta = extract_musical_meta("速度：120\n节奏：慢板\n调性：降B大调")
+    assert meta == {"bpm": 120, "tempo": "慢板", "key": "降B大调"}
+
+
+def test_meta_tempo_value_that_is_bpm_goes_to_bpm():
+    assert extract_musical_meta("Tempo: 140 BPM") == {"bpm": 140}
+
+
+def test_meta_ignores_out_of_range_bpm():
+    assert "bpm" not in extract_musical_meta("BPM: 9999")
+    assert "bpm" not in extract_musical_meta("BPM: 3")
+
+
+def test_meta_missing_returns_empty():
+    assert extract_musical_meta("no metadata here") == {}
+    assert extract_musical_meta("") == {}
