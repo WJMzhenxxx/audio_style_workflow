@@ -150,11 +150,17 @@ def main(argv=None) -> int:
         finish = choice.get("finish_reason")
         content = message.get("content")
         reasoning = message.get("reasoning_content")
+        usage = data.get("usage") or {}
+        prompt_tokens = usage.get("prompt_tokens")
         print(f"finish_reason: {finish}")
+        print(f"usage        : {usage}")
         print(f"content      : {content!r}"[:600])
         print(f"reasoning    : {(reasoning or '')[:400]!r}")
         print()
-        if content in (None, "") and finish == "length":
+        if isinstance(prompt_tokens, int) and prompt_tokens < 200:
+            print(">> 判断：prompt_tokens 只有 %d，音频没进入模型——服务端只是在续写 prompt 文本。" % prompt_tokens)
+            print("   试试 --api generate（audio_data 走另一条解析路径），或确认服务端模型是多模态的。")
+        elif content in (None, "") and finish == "length":
             print(">> 判断：思考把 max_tokens 用完了（content 未产出）。加大 --max-tokens 或启用 thinking budget。")
         elif content in (None, ""):
             print(">> 判断：content 为空但未截断，可能只写了 reasoning_content。")

@@ -581,3 +581,29 @@ def test_finish_reason_recorded(audio_file):
     payload = SglangMusicClient(api_mode="chat", transport=transport).analyze(audio_file)
     assert payload["finish_reason"] == "length"
     assert payload["content_source"] == "reasoning_content"
+
+
+def test_warns_when_prompt_tokens_too_small(audio_file, caplog):
+    """prompt_tokens 只有纯文本规模 -> 说明音频没进模型。"""
+    transport = RecordingTransport({
+        "choices": [{"finish_reason": "stop",
+                     "message": {"content": "Pop\nok"}}],
+        "usage": {"prompt_tokens": 105, "completion_tokens": 10},
+    })
+    client = SglangMusicClient(api_mode="chat", audio_base64=True, transport=transport)
+    with caplog.at_level(logging.WARNING, logger="audio_style_workflow.api.sglang_client"):
+        payload = client.analyze(audio_file)
+
+    assert payload["prompt_tokens"] == 105
+    assert any("音频很可能没有被服务端解析" in r.message for r in caplog.records)
+
+
+def test_no_warning_when_prompt_tokens_large(audio_file, caplog):
+    transport = RecordingTransport({
+        "choices": [{"finish_reason": "stop", "message": {"content": "Pop\nok"}}],
+        "usage": {"prompt_tokens": 1500, "completion_tokens": 10},
+    })
+    client = SglangMusicClient(api_mode="chat", transport=transport)
+    with caplog.at_level(logging.WARNING, logger="audio_style_workflow.api.sglang_client"):
+        client.analyze(audio_file)
+    assert not any("音频很可能没有被服务端解析" in r.message for r in caplog.records)

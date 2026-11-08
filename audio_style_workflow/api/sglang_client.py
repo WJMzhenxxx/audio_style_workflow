@@ -94,6 +94,8 @@ _AUDIO_MIME = {
 }
 #: base64 内联超过该大小时提示（体积膨胀约 33%）
 _BASE64_WARN_BYTES = 20 * 1024 * 1024
+#: 纯文本 prompt 的 token 数上限估计；prompt_tokens 低于它说明音频没进模型
+_TEXT_ONLY_PROMPT_TOKENS = 200
 
 
 class ProcessorResolveError(ValueError):
@@ -268,6 +270,9 @@ class SglangMusicClient(SongAnalysisClient):
         self._last_sent_path: Optional[str] = None
         #: 最近一次 chat 响应的 finish_reason（"stop" / "length" / None）
         self._last_finish_reason: Optional[str] = None
+        #: 最近一次 chat 响应的 usage.prompt_tokens
+        self._last_prompt_tokens: Optional[int] = None
+        self._audio_consumed_warned = False
 
         self.headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -363,6 +368,26 @@ class SglangMusicClient(SongAnalysisClient):
                 preview or "(空)",
             )
 
+    def _check_audio_consumed(self) -> None:
+        """用 usage.prompt_tokens 判断音频有没有真正进入模型。
+
+        纯文本 prompt 约 100 token；一段音频至少要几百个 token。若
+        prompt_tokens 仍然很小，说明服务端没解析请求里的音频。
+        """
+        tokens = self._last_prompt_tokens
+        if tokens is None or self._audio_consumed_warned:
+            return
+        if tokens < _TEXT_ONLY_PROMPT_TOKENS:
+            self._audio_consumed_warned = True
+            logger.warning(
+                "[sglang] usage.prompt_tokens=%d，音频很可能没有被服务端解析"
+                "（纯文本 prompt 约 %d token）。模型只是在续写 prompt 文本，"
+                "所以不同歌曲会得到几乎相同的答案。可先试 --sglang-api generate，"
+                "或确认服务端模型/请求格式支持该音频字段。",
+                tokens,
+                _TEXT_ONLY_PROMPT_TOKENS,
+            )
+
     def _disable_thinking_budget(self, reason: str) -> None:
         """服务端拒绝该字段时自动降级（只提示一次）。"""
         if not self.thinking_budget_applied:
@@ -397,6 +422,8 @@ class SglangMusicClient(SongAnalysisClient):
             text, reasoning, raw_response, content_source = self._analyze_via_chat(audio_url)
 
         self._check_identical_streak(text)
+        if self.api_mode == "chat":
+            self._check_audio_consumed()
 
         payload: dict[str, Any] = {
             "status": "ok",
@@ -415,6 +442,8 @@ class SglangMusicClient(SongAnalysisClient):
             payload["thinking_budget_applied"] = bool(self.thinking_budget_applied)
         if self.api_mode == "chat" and self._last_finish_reason:
             payload["finish_reason"] = self._last_finish_reason
+        if self._last_prompt_tokens is not None:
+            payload["prompt_tokens"] = self._last_prompt_tokens
         styles = extract_styles_from_text(text)
         if styles:
             payload["styles"] = styles
@@ -491,6 +520,12 @@ class SglangMusicClient(SongAnalysisClient):
         reasoning = message.get("reasoning_content") if isinstance(message, dict) else None
         finish_reason = choices[0].get("finish_reason") if isinstance(choices[0], dict) else None
         self._last_finish_reason = finish_reason
+
+        usage = raw.get("usage") if isinstance(raw, dict) else None
+        if isinstance(usage, dict):
+            prompt_tokens = usage.get("prompt_tokens")
+            if isinstance(prompt_tokens, int):
+                self._last_prompt_tokens = prompt_tokens
 
         has_content = isinstance(content, str) and content.strip()
         has_reasoning = isinstance(reasoning, str) and reasoning.strip()
