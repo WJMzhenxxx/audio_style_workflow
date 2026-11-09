@@ -364,3 +364,81 @@ def test_tempo_label_from_bpm():
     assert tempo_label_from_bpm(136) == "Allegro"
     assert tempo_label_from_bpm(50) == "Largo"
     assert tempo_label_from_bpm(180) == "Presto"
+
+
+#: 官方 sections caption 格式的模型输出（MOSS 训练分布内）
+SECTIONS_OUTPUT = """这是一首明亮而富有推进力的流行摇滚作品，副歌极具爆发力。
+
+**Genre**: Pop-Rock, Electropop
+**Tempo**: 125 BPM / 中速
+**Harmony & Key**: G major，主歌 I–V–vi–IV 循环
+**Instrument**: 合成器铺底、失真吉他、四拍底鼓、清亮女声
+**Song Structure & Dynamics**: 主歌克制、预副歌递进、副歌全开
+**Vocals & Lyrics**: 女声主唱，层次和声
+**Mood & Theme**: 激昂, 希望, 自我觉醒
+**Score**: 8
+**Review**: 制作精良、副歌抓耳的一首流行摇滚圣歌。
+**Why**: 失真吉他 + 四拍底鼓 + 强副歌属于流行摇滚。
+"""
+
+
+def test_sections_format_styles():
+    from audio_style_workflow.style_parser import extract_styles_from_text
+
+    assert extract_styles_from_text(SECTIONS_OUTPUT) == ["Pop-Rock", "Electropop"]
+
+
+def test_sections_format_meta():
+    """**Tempo**: 125 BPM / 中速 与 **Harmony & Key**: 要能拆出 125 / 中速 / G major。"""
+    from audio_style_workflow.style_parser import extract_musical_meta
+
+    meta = extract_musical_meta(SECTIONS_OUTPUT)
+    assert meta["bpm"] == 125
+    assert meta["tempo"] == "中速"
+    assert meta["key"] == "G major"
+
+
+def test_sections_format_mood_score_review_why():
+    from audio_style_workflow.style_parser import (
+        extract_genre_rationale,
+        extract_mood,
+        extract_review,
+        extract_score,
+    )
+
+    assert extract_mood(SECTIONS_OUTPUT) == "激昂, 希望, 自我觉醒"
+    assert extract_score(SECTIONS_OUTPUT) == 8
+    assert extract_review(SECTIONS_OUTPUT).startswith("制作精良")
+    assert extract_genre_rationale(SECTIONS_OUTPUT).startswith("失真吉他")
+
+
+def test_sections_en_output():
+    from audio_style_workflow.style_parser import (
+        extract_mood,
+        extract_musical_meta,
+        extract_styles_from_text,
+    )
+
+    text = (
+        "**Genre**: K-Pop, Dance-Pop\n"
+        "**Tempo**: 124 BPM / fast\n"
+        "**Harmony & Key**: G major\n"
+        "**Mood & Theme**: Bright, Uplifting\n"
+    )
+    assert extract_styles_from_text(text) == ["K-Pop", "Dance-Pop"]
+    meta = extract_musical_meta(text)
+    assert meta["bpm"] == 124 and meta["tempo"].lower() == "fast"
+    assert meta["key"] == "G major"
+    assert extract_mood(text) == "Bright, Uplifting"
+
+
+def test_prompt_uses_official_section_headers():
+    """对齐官方 caption 的 sections 表头。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    for lang in ("zh", "en"):
+        prompt = get_analysis_prompt(lang)
+        for header in ("Genre", "Tempo", "Harmony & Key", "Instrument",
+                       "Song Structure & Dynamics", "Vocals & Lyrics",
+                       "Mood & Theme"):
+            assert header in prompt, (lang, header)

@@ -308,26 +308,26 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --sglang-audio-ba
 
 ### prompt 与官方用法的对齐
 
-参考官方仓库（`infer.py` / `app.py` / `README_zh.md`）后修正了两处偏离：
+官方训练语料由 [MOSS-Music-Data-Pipeline](https://github.com/wx9Songs/MOSS-Music-Data-Pipeline)
+生成：先用 ALM（Qwen3-Omni / MusicFlamingo）打底 caption，再由 Qwen3-235B 结合
+MIR 特征合成最终 caption，最后反向生成"用户提问"。因此模型的**原生输出格式是
+自然语言 caption**，要么一整段（paragraph），要么**分节小标题**（sections）：
 
-| 项 | 官方做法 | 我们之前 | 现在 |
-| --- | --- | --- | --- |
-| 提问方式 | 自由描述：「请从风格与速度、调性与和声、乐器编配、结构安排以及整体情绪几个方面描述这段音乐」 | 强制 8 行结构化，第一行就要英文流派列表 | **先详细描述，再另起一行输出摘要块**（`TAGS:` / `BPM:` / …） |
-| 解码 | `temperature=1.0, top_p=0.8~1.0, top_k=50`（sampling） | `temperature=0.0`（贪心） | 可配 `--temperature / --top-p / --top-k`，默认仍 0.0（可复现） |
-
-原因：README 明确写的是「**音乐描述与标签**：用自然语言刻画情绪、风格、配器……」，
-评测（SDD Genre 4.84）也是 **captioning**。模型擅长散文式描述，强行让它第一行吐
-规范化标签列表，会导致"硬挤一个大类词"，且跨 prompt 版本漂移（同一首 `Golden.flac`
-上一版是 `Electropop/Dance-pop/Synth-pop`，下一版变成 `Progressive House/Trance`，
-而 BPM/Key 一直稳定）。
-
-```bash
-# 想要更接近官方 demo 的效果（引入随机性，标签可能每次略有不同）
---temperature 1.0 --top-p 0.8 --top-k 50
-
-# 默认仍是可复现的贪心
---temperature 0
 ```
+**Tempo**  **Instrument:**  **Song Structure & Dynamics:**
+**Harmony & Key:**  **Vocals & Lyrics:**  **Mood & Theme:**
+```
+
+本项目的 prompt 已改成这个 sections 格式（只额外加了 `**Genre**` / `**Score**` /
+`**Review**` / `**Why**`），因为它在训练分布内、每个字段都有稳定锚点。
+解析器同时兼容：`TAGS:` 行、第一行标签、分节小标题。
+
+| 项 | 官方做法 | 我们现在 |
+| --- | --- | --- |
+| 提问 | 短句泛问（"请描述一下这段音乐"）+ 列出几个维度 | 列出维度 + 指定小标题 |
+| 输出 | paragraph 或 sections | sections（含 Genre/Score 等扩展字段） |
+| 解码 | demo T=1.0 / 文档 T=0.0 | 默认 T=0.0（可配） |
+| 音频 | 16 kHz 内部重采样，12.5 tok/s | 同样 16k 单声道可选 |
 
 ### 两种解码模式的取舍（实测）
 

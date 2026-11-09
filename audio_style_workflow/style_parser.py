@@ -43,37 +43,36 @@ _MAX_STYLES = 8
 # ======================================================================
 #: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
-    "Analyze this music.\n"
-    "Part 1: describe it in detail covering style and tempo, key and harmony, "
-    "instrumentation, structure, and overall mood (at least 120 words).\n"
-    "Part 2: after the description, output a summary block in exactly this format, "
-    "with no extra commentary:\n"
-    "TAGS: <1-3 English genre tags, comma-separated, most specific first>\n"
-    "BPM: <integer beats per minute, e.g. 120>\n"
-    "Tempo: <short English tempo word, e.g. Slow / Moderato / Fast>\n"
-    "Key: <key signature, e.g. C major / A minor>\n"
-    "Mood: <1-2 mood words>\n"
-    "Score: <integer 0-10, 10 being best>\n"
-    "Review: <one sentence overall review>\n"
-    "Why: <one or two sentences explaining why these styles fit>"
+    "Describe this track by covering the overall atmosphere, instrumentation, "
+    "structural development, tonal character and emotional expression.\n"
+    "Use exactly the section headers below (keep the ** markers), one section per line:\n"
+    "**Genre**: <1-3 English genre tags, comma-separated, most specific first; "
+    "only styles you can justify from the audio itself, no guessing the artist's scene>\n"
+    "**Tempo**: <integer BPM + slow/medium/fast, e.g. \"125 BPM / medium\">\n"
+    "**Harmony & Key**: <key signature, e.g. \"G major\"; add the chord movement if useful>\n"
+    "**Instrument**: <main instruments and timbres>\n"
+    "**Song Structure & Dynamics**: <sections and how the arrangement develops>\n"
+    "**Vocals & Lyrics**: <vocal characteristics; state clearly if instrumental>\n"
+    "**Mood & Theme**: <2-3 mood words>\n"
+    "**Score**: <integer 0-10, 10 being best>\n"
+    "**Review**: <one or two sentences of overall review>\n"
+    "**Why**: <one or two sentences on why these genres fit>"
 )
 
-#: 中文版 prompt：先按官方推荐的"多维度自由描述"，再输出一行机器可读摘要。
-#: 官方 demo / infer.py 都是自由描述（captioning 才是模型强项），直接要标签列表
-#: 会让模型"硬挤"一个大类词，跨 prompt 版本还会漂移。
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请分析这段音乐。\n"
-    "第一部分：从风格与速度、调性与和声、乐器编配、结构安排以及整体情绪这几个方面，"
-    "用中文详细描述（150 字以上）。\n"
-    "第二部分：在描述之后另起一行，严格按下面格式输出摘要，不要加任何多余说明：\n"
-    "TAGS: <英文流派标签，逗号分隔，1-3 个，最具体的放最前>\n"
-    "BPM: <每分钟节拍数整数，例如 120>\n"
-    "Tempo: <英文速度词，例如 Slow / Moderato / Fast>\n"
-    "Key: <英文调性，例如 C major / A minor>\n"
-    "Mood: <中文氛围词，1-2 个，例如 温暖, 舒缓>\n"
-    "Score: <0-10 整数评分，10 为最佳>\n"
-    "Review: <用中文写一句话总体评价>\n"
-    "Why: <用中文写一两句话，说明为什么判定为这些风格>"
+    "请从整体氛围、乐器音色、结构发展、调性色彩和情绪表达几个方面描述这段音乐。\n"
+    "请严格使用下面的小标题（保留 ** 号），每个小标题占一行：\n"
+    "**Genre**: <英文流派标签，逗号分隔，1-3 个，最具体的放最前；"
+    "只写能从音频本身听出来的风格，不要根据艺人产地或产业背景推测>\n"
+    "**Tempo**: <BPM 整数 + 慢/中/快，例如 \"125 BPM / 中速\">\n"
+    "**Harmony & Key**: <调性，例如 \"G major\"；如有必要可附带和声走向>\n"
+    "**Instrument**: <主要乐器与音色>\n"
+    "**Song Structure & Dynamics**: <段落结构与动态发展>\n"
+    "**Vocals & Lyrics**: <人声特征；纯器乐请注明>\n"
+    "**Mood & Theme**: <中文情绪词 2-3 个>\n"
+    "**Score**: <0-10 整数评分>\n"
+    "**Review**: <一到两句总体评价>\n"
+    "**Why**: <一到两句说明为什么判定为这些风格>"
 )
 
 #: 语言 -> prompt 模板
@@ -367,11 +366,21 @@ _BPM_LABEL_RE = re.compile(
 _BPM_INLINE_RE = re.compile(r"(\d{2,3})\s*(?:bpm|beats?\s*per\s*minute)\b", re.IGNORECASE)
 #: ``Tempo: Moderato`` / ``速度：慢板``
 _TEMPO_LABEL_RE = re.compile(
-    r"^\s*(?:tempo|速度|节奏|节拍速度)\s*[:：=\-—]\s*(.+?)\s*$", re.IGNORECASE
+    r"^\s*(?:tempo|speed|速度|节奏|节拍速度|速度与节奏)\s*[:：=\-—]\s*(.+?)\s*$",
+    re.IGNORECASE,
+)
+#: 复合值里的速度词（"125 BPM / Moderato" -> Moderato）
+_TEMPO_WORD_RE = re.compile(
+    r"(largo|adagio|andante|moderato|allegro|vivace|presto|"
+    r"slow|medium|moderate|mid-?tempo|fast|"
+    r"慢板|慢速|中速|快速|快板|行板|小快板|急板|慢|快)",
+    re.IGNORECASE,
 )
 #: ``Key: C major`` / ``调性：A小调``
 _KEY_LABEL_RE = re.compile(
-    r"^\s*(?:key|tonality|调性|调号|调)\s*[:：=\-—]\s*(.+?)\s*$", re.IGNORECASE
+    r"^\s*(?:harmony\s*(?:&|and|/|与)\s*key|key|tonality|调性|调号|"
+    r"和声\s*(?:与|和|/)\s*调性|调性色彩|调)\s*[:：=\-—]\s*(.+?)\s*$",
+    re.IGNORECASE,
 )
 #: 纯 BPM 值（``120`` / ``120 BPM``），出现在 Tempo 标签后时按 BPM 处理
 _BPM_VALUE_RE = re.compile(r"^\s*(\d{2,3})(?:\s*bpm)?\s*$", re.IGNORECASE)
@@ -454,7 +463,13 @@ def extract_musical_meta(text: str) -> dict[str, Any]:
                         if bpm is None:
                             bpm = _valid_bpm(int(bpm_only.group(1)))
                     else:
-                        tempo = value[:_MAX_META_LEN]
+                        # "125 BPM / Moderato" 这类复合值：速度词单独取
+                        word = _TEMPO_WORD_RE.search(value)
+                        tempo = (word.group(1) if word else value)[:_MAX_META_LEN]
+                        if bpm is None:
+                            inline = _BPM_INLINE_RE.search(value)
+                            if inline:
+                                bpm = _valid_bpm(int(inline.group(1)))
                 continue
 
         # --- Key 标签 ---
@@ -462,8 +477,13 @@ def extract_musical_meta(text: str) -> dict[str, Any]:
             match = _KEY_LABEL_RE.match(line)
             if match:
                 value = _clean_meta_value(match.group(1))
-                if value and _looks_like_key(value):
-                    key = value[:_MAX_META_LEN]
+                if value:
+                    # 值里常带和声说明（"G major，I–V–vi–IV 循环"）——优先抽出调性本身
+                    inline = _KEY_INLINE_RE.search(value)
+                    if inline:
+                        key = (inline.group(1) or inline.group(2))[:_MAX_META_LEN]
+                    elif _looks_like_key(value):
+                        key = value[:_MAX_META_LEN]
                 continue
 
     # 兜底：整段文本里找
@@ -491,7 +511,8 @@ def extract_musical_meta(text: str) -> dict[str, Any]:
 # ----------------------------------------------------------------------
 #: ``Mood: 温暖, 舒缓`` / ``氛围：空灵``
 _MOOD_LABEL_RE = re.compile(
-    r"^\s*(?:mood|atmosphere|vibe|feeling|氛围|情绪|气氛|情感)\s*[:：]\s*(.+?)\s*$",
+    r"^\s*(?:mood\s*(?:&|and|/|与)\s*theme|mood|atmosphere|vibe|feeling|"
+    r"情绪\s*(?:与|和|/)\s*主题|氛围|情绪|气氛|情感|主题)\s*[:：]\s*(.+?)\s*$",
     re.IGNORECASE,
 )
 
@@ -774,6 +795,13 @@ class StyleParser:
         if styles:
             return styles[: self.max_styles], "json", _extract_confidence(payload)
 
+        # 客户端只返回正文（无 styles 字段）时，先做确定性文本解析
+        text = _payload_text(payload)
+        if text:
+            text_styles = extract_styles_from_text(text)
+            if text_styles:
+                return text_styles[: self.max_styles], "text", _extract_confidence(payload)
+
         if self._llm is None:
             preview = _preview(payload)
             raise StyleParseError(
@@ -817,6 +845,19 @@ class StyleParser:
         if not styles:
             raise StyleParseError("LLM 认为响应中没有可提取的歌曲风格")
         return styles[: self.max_styles], "llm", None
+
+
+#: 可能承载模型原始文本的字段（客户端只回文本时用）
+_TEXT_FIELDS = ("description", "text", "content", "raw_response", "output", "result")
+
+
+def _payload_text(payload: Mapping[str, Any]) -> str:
+    """取出响应里的自然语言正文（用于确定性兜底解析）。"""
+    for field in _TEXT_FIELDS:
+        value = payload.get(field)
+        if isinstance(value, str) and value.strip():
+            return value
+    return ""
 
 
 def _preview(payload: Any, limit: int = 240) -> str:
