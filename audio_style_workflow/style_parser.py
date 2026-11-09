@@ -48,6 +48,7 @@ DEFAULT_ANALYSIS_PROMPT = (
     "Use exactly the section headers below (keep the ** markers), one section per line:\n"
     "**Genre**: <1-3 English genre tags, comma-separated, most specific first; "
     "only styles you can justify from the audio itself, no guessing the artist's scene>\n"
+    "**Why**: <one or two sentences on why these genres fit>\n"
     "**Tempo**: <integer BPM + slow/medium/fast, e.g. \"125 BPM / medium\">\n"
     "**Harmony & Key**: <key signature, e.g. \"G major\"; add the chord movement if useful>\n"
     "**Instrument**: <main instruments and timbres>\n"
@@ -55,8 +56,7 @@ DEFAULT_ANALYSIS_PROMPT = (
     "**Vocals & Lyrics**: <vocal characteristics; state clearly if instrumental>\n"
     "**Mood & Theme**: <2-3 mood words>\n"
     "**Score**: <integer 0-10, 10 being best>\n"
-    "**Review**: <one or two sentences of overall review>\n"
-    "**Why**: <one or two sentences on why these genres fit>"
+    "**Review**: <one or two sentences of overall review, in Chinese>"
 )
 
 DEFAULT_ANALYSIS_PROMPT_ZH = (
@@ -64,6 +64,7 @@ DEFAULT_ANALYSIS_PROMPT_ZH = (
     "请严格使用下面的小标题（保留 ** 号），每个小标题占一行：\n"
     "**Genre**: <英文流派标签，逗号分隔，1-3 个，最具体的放最前；"
     "只写能从音频本身听出来的风格，不要根据艺人产地或产业背景推测>\n"
+    "**Why**: <一到两句说明为什么判定为这些风格>\n"
     "**Tempo**: <BPM 整数 + 慢/中/快，例如 \"125 BPM / 中速\">\n"
     "**Harmony & Key**: <调性，例如 \"G major\"；如有必要可附带和声走向>\n"
     "**Instrument**: <主要乐器与音色>\n"
@@ -71,8 +72,7 @@ DEFAULT_ANALYSIS_PROMPT_ZH = (
     "**Vocals & Lyrics**: <人声特征；纯器乐请注明>\n"
     "**Mood & Theme**: <中文情绪词 2-3 个>\n"
     "**Score**: <0-10 整数评分>\n"
-    "**Review**: <一到两句总体评价>\n"
-    "**Why**: <一到两句说明为什么判定为这些风格>"
+    "**Review**: <用中文写一到两句总体评价>"
 )
 
 #: 语言 -> prompt 模板
@@ -538,6 +538,44 @@ def tempo_label_from_bpm(bpm: int) -> str:
     return "Presto"
 
 
+#: 情绪值里常见的"解释性尾巴"，从这些词开始截断
+_MOOD_TAIL_MARKERS = (
+    "，带有", "，营造", "，整体", "，并", "，同时", "，适合",
+    ", with", ", creating", ", and it", ", giving", ", suitable",
+)
+#: 中文情绪词一般很短，超过这个长度多半是描述句
+_MAX_MOOD_PART_LEN = 6
+#: 英文情绪词上限
+_MAX_MOOD_PART_LEN_EN = 16
+
+
+def _normalize_mood(value: str, limit: int = 3) -> str:
+    """把 ``明亮、现代、充满能量的电子流行氛围`` 这类长句裁成短情绪词。
+
+    模型在 ``Mood & Theme`` 里常写一整句解释，直接当标签会污染 ``TMOOD``。
+    这里按分隔符切分，丢弃过长的"描述性"片段。
+    """
+    text = (value or "").strip().strip("。.；;").strip()
+    if not text:
+        return ""
+    for marker in _MOOD_TAIL_MARKERS:
+        index = text.find(marker)
+        if index > 0:
+            text = text[:index]
+            break
+
+    parts = [part.strip() for part in re.split(r"[、,，/;；|]", text) if part.strip()]
+    kept: list[str] = []
+    for part in parts:
+        has_cjk = bool(re.search(r"[\u4e00-\u9fff]", part))
+        cap = _MAX_MOOD_PART_LEN if has_cjk else _MAX_MOOD_PART_LEN_EN
+        if len(part) <= cap:
+            kept.append(part)
+    if not kept:                      # 全是长句时退回前两个片段
+        kept = [part[:cap] for part in parts[:2]]
+    return ", ".join(kept[:limit])
+
+
 def extract_mood(text: str) -> Optional[str]:
     """提取氛围/情绪（如 ``温暖, 舒缓``）。
 
@@ -555,8 +593,11 @@ def extract_mood(text: str) -> Optional[str]:
             continue
         value = _clean_meta_value(match.group(1))
         value = value.strip("[]【】").strip()
-        if value and len(value) <= _MAX_META_LEN:
-            return value
+        if not value:
+            continue
+        normalized = _normalize_mood(value)
+        if normalized:
+            return normalized[:_MAX_META_LEN]
     return None
 
 

@@ -442,3 +442,23 @@ def test_prompt_uses_official_section_headers():
                        "Song Structure & Dynamics", "Vocals & Lyrics",
                        "Mood & Theme"):
             assert header in prompt, (lang, header)
+
+
+def test_mood_long_phrase_is_trimmed():
+    """Mood & Theme 常写成整句解释，写标签前要裁成短词。"""
+    from audio_style_workflow.style_parser import extract_mood
+
+    assert extract_mood("**Mood & Theme**: 明亮、现代、充满能量的电子流行氛围") == "明亮, 现代"
+    assert extract_mood("**Mood & Theme**: 梦幻、忧郁、浪漫，带有 80 年代合成器流行乐的怀旧感。") == "梦幻, 忧郁, 浪漫"
+    assert extract_mood("**Mood & Theme**: 梦幻、空灵、略带忧郁的电子氛围。") == "梦幻, 空灵"
+    assert extract_mood("**Mood & Theme**: uplifting, hopeful, energetic") == "uplifting, hopeful, energetic"
+
+
+def test_prompt_puts_why_before_tempo():
+    """Why 放在最后时模型有 6/9 次整段漏写，挪到 Genre 之后。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    for lang in ("zh", "en"):
+        prompt = get_analysis_prompt(lang)
+        assert prompt.index("**Why**") < prompt.index("**Tempo**") < prompt.index("**Review**")
+    assert "用中文写" in get_analysis_prompt("zh")
