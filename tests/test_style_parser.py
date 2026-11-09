@@ -462,3 +462,23 @@ def test_prompt_puts_why_before_tempo():
         prompt = get_analysis_prompt(lang)
         assert prompt.index("**Why**") < prompt.index("**Tempo**") < prompt.index("**Review**")
     assert "用中文写" in get_analysis_prompt("zh")
+
+
+def test_mood_fallback_does_not_cut_midword():
+    """全是长句时退回整段，不能切成"悲伤中带有希"这种半截词。"""
+    from audio_style_workflow.style_parser import extract_mood
+
+    value = extract_mood("**Mood & Theme**: 悲伤中带有希望，电子音色的冷冽感")
+    assert "希" not in value.split(",")[0][-1] or value.split(",")[0].endswith("希望")
+    assert "悲伤中带有希望" in value
+
+
+def test_prompt_puts_volatile_section_last():
+    """易复读的 Song Structure 放在末尾，Mood/Score/Review 必须排在它前面。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    for lang in ("zh", "en"):
+        prompt = get_analysis_prompt(lang)
+        struct = prompt.index("**Song Structure & Dynamics**")
+        for header in ("**Mood & Theme**", "**Score**", "**Review**", "**Genre**", "**Tempo**"):
+            assert prompt.index(header) < struct, (lang, header)

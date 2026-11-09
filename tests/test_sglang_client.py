@@ -721,3 +721,17 @@ def test_sampling_params_passed(audio_file):
     sampling = calls[0]["sampling_params"]
     assert sampling["temperature"] == 1.0
     assert sampling["top_p"] == 0.8 and sampling["top_k"] == 50
+
+
+def test_degenerate_repetition_detected_and_trimmed():
+    from audio_style_workflow.api.sglang_client import _degenerate_info, _trim_repetition
+
+    normal = "**Genre**: Pop-Punk\n**Tempo**: 100 BPM / 中速\n**Mood & Theme**: 明亮, 动感"
+    assert _degenerate_info(normal) is None
+
+    looping = "".join(f"主歌（0:{i:02d}）钢琴与合成器铺垫情绪。\n" for i in range(60))
+    info = _degenerate_info(looping)
+    assert info is not None and info[1] >= 6
+    trimmed = _trim_repetition(looping, info[0])
+    assert len(trimmed) < len(looping) / 3
+    assert "已在此截断" in trimmed

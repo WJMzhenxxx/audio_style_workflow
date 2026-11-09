@@ -44,35 +44,39 @@ _MAX_STYLES = 8
 #: 引导模型把风格/速度/调性/理由写在固定位置（便于确定性解析），后续输出完整描述
 DEFAULT_ANALYSIS_PROMPT = (
     "Describe this track by covering the overall atmosphere, instrumentation, "
-    "structural development, tonal character and emotional expression.\n"
+    "structural development, tonal character and emotional expression. "
+    "Keep the whole answer under 400 words.\n"
     "Use exactly the section headers below (keep the ** markers), one section per line:\n"
     "**Genre**: <1-3 English genre tags, comma-separated, most specific first; "
     "only styles you can justify from the audio itself, no guessing the artist's scene>\n"
     "**Why**: <one or two sentences on why these genres fit>\n"
     "**Tempo**: <integer BPM + slow/medium/fast, e.g. \"125 BPM / medium\">\n"
     "**Harmony & Key**: <key signature, e.g. \"G major\"; add the chord movement if useful>\n"
-    "**Instrument**: <main instruments and timbres>\n"
-    "**Song Structure & Dynamics**: <sections and how the arrangement develops>\n"
-    "**Vocals & Lyrics**: <vocal characteristics; state clearly if instrumental>\n"
-    "**Mood & Theme**: <2-3 mood words>\n"
+    "**Mood & Theme**: <2-3 short mood words>\n"
     "**Score**: <integer 0-10, 10 being best>\n"
-    "**Review**: <one or two sentences of overall review, in Chinese>"
+    "**Review**: <one or two sentences of overall review, in Chinese>\n"
+    "**Instrument**: <main instruments and timbres>\n"
+    "**Vocals & Lyrics**: <vocal characteristics; state clearly if instrumental>\n"
+    "**Song Structure & Dynamics**: <3-5 sentences summarizing the main sections and how "
+    "the arrangement develops; do NOT list timestamped segments one by one>"
 )
 
 DEFAULT_ANALYSIS_PROMPT_ZH = (
-    "请从整体氛围、乐器音色、结构发展、调性色彩和情绪表达几个方面描述这段音乐。\n"
+    "请从整体氛围、乐器音色、结构发展、调性色彩和情绪表达几个方面描述这段音乐，"
+    "总长度控制在 400 字以内。\n"
     "请严格使用下面的小标题（保留 ** 号），每个小标题占一行：\n"
     "**Genre**: <英文流派标签，逗号分隔，1-3 个，最具体的放最前；"
     "只写能从音频本身听出来的风格，不要根据艺人产地或产业背景推测>\n"
     "**Why**: <一到两句说明为什么判定为这些风格>\n"
     "**Tempo**: <BPM 整数 + 慢/中/快，例如 \"125 BPM / 中速\">\n"
     "**Harmony & Key**: <调性，例如 \"G major\"；如有必要可附带和声走向>\n"
-    "**Instrument**: <主要乐器与音色>\n"
-    "**Song Structure & Dynamics**: <段落结构与动态发展>\n"
-    "**Vocals & Lyrics**: <人声特征；纯器乐请注明>\n"
-    "**Mood & Theme**: <中文情绪词 2-3 个>\n"
+    "**Mood & Theme**: <2-3 个简短的中文情绪词>\n"
     "**Score**: <0-10 整数评分>\n"
-    "**Review**: <用中文写一到两句总体评价>"
+    "**Review**: <用中文写一到两句总体评价>\n"
+    "**Instrument**: <主要乐器与音色>\n"
+    "**Vocals & Lyrics**: <人声特征；纯器乐请注明>\n"
+    "**Song Structure & Dynamics**: <用 3-5 句话概括主要段落与动态发展；"
+    "不要逐段罗列时间戳>"
 )
 
 #: 语言 -> prompt 模板
@@ -571,9 +575,12 @@ def _normalize_mood(value: str, limit: int = 3) -> str:
         cap = _MAX_MOOD_PART_LEN if has_cjk else _MAX_MOOD_PART_LEN_EN
         if len(part) <= cap:
             kept.append(part)
-    if not kept:                      # 全是长句时退回前两个片段
-        kept = [part[:cap] for part in parts[:2]]
-    return ", ".join(kept[:limit])
+    if not kept:                      # 全是长句时退回前两个片段（整段保留，别从词中间切）
+        kept = parts[:2]
+    joined = ", ".join(kept[:limit])
+    if len(joined) > 24:
+        joined = joined[:24].rstrip("，, ") + "…"
+    return joined
 
 
 def extract_mood(text: str) -> Optional[str]:

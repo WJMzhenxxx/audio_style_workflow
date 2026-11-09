@@ -48,6 +48,7 @@ thinking budget 说明：设置 ``thinking_budget`` 时必须同时提供
 from __future__ import annotations
 
 import base64
+import collections
 import hashlib
 import json
 import logging
@@ -207,6 +208,45 @@ def _looks_like_unsupported_processor(message: str) -> bool:
     """判断错误是否由「服务端未开启 custom logit processor」引起。"""
     low = (message or "").lower()
     return any(h in low for h in _UNSUPPORTED_PROCESSOR_HINTS)
+
+
+#: 判定"重复退化"时的 shingle 长度与触发次数
+_DEGENERATE_SHINGLE = 12
+_DEGENERATE_REPEATS = 6
+
+
+def _degenerate_info(text: str) -> Optional[tuple[str, int]]:
+    """检测模型输出是否陷入重复（返回重复片段与次数）。
+
+    MOSS 在长结构化输出上偶发复读（官方 issue #1 也提到过），会把
+    ``max_new_tokens`` 烧光、导致后面的字段整段缺失。用「12 字 shingle
+    出现次数」判断：正常输出最多 2-3 次，退化时可达 20+ 次。
+    """
+    if not text or len(text) < _DEGENERATE_SHINGLE * _DEGENERATE_REPEATS:
+        return None
+    counter = collections.Counter(
+        text[i:i + _DEGENERATE_SHINGLE]
+        for i in range(0, len(text) - _DEGENERATE_SHINGLE, 3)
+    )
+    fragment, count = counter.most_common(1)[0]
+    if count >= _DEGENERATE_REPEATS:
+        return fragment, count
+    return None
+
+
+def _trim_repetition(text: str, fragment: str, keep: int = 2) -> str:
+    """把复读部分截掉，只保留前两次出现，避免天量垃圾写进评价文件。"""
+    index, seen = -1, 0
+    start = 0
+    while True:
+        index = text.find(fragment, start)
+        if index < 0:
+            break
+        seen += 1
+        if seen > keep:
+            return text[:index].rstrip() + "\n…（模型输出出现重复，已在此截断）"
+        start = index + len(fragment)
+    return text
 
 
 def _audio_duration_seconds(path: Path) -> Optional[float]:
@@ -535,6 +575,21 @@ class SglangMusicClient(SongAnalysisClient):
                 "可配置 --llm-model 让 StyleParser 用 LLM 兜底提取"
             )
         payload.update(extract_musical_meta(text))
+        degenerate = _degenerate_info(text)
+        if degenerate is not None:
+            fragment, count = degenerate
+            logger.warning(
+                "[sglang] %s 输出疑似重复退化（片段 %r 出现 %d 次，%d 字符），",
+                audio_path.name, fragment[:16], count, len(text),
+            )
+            logger.warning(
+                "[sglang] 已截断重复部分；若同一首反复出现，可降低 --max-new-tokens "
+                "或改用 --temperature 0.3 打破贪心复读"
+            )
+            payload["degenerate"] = {"fragment": fragment, "count": count}
+            text = _trim_repetition(text, fragment)
+            payload["description"] = text
+
         mood = extract_mood(text)
         if mood:
             payload["mood"] = mood
