@@ -482,3 +482,12 @@ def test_prompt_puts_volatile_section_last():
         struct = prompt.index("**Song Structure & Dynamics**")
         for header in ("**Mood & Theme**", "**Score**", "**Review**", "**Genre**", "**Tempo**"):
             assert prompt.index(header) < struct, (lang, header)
+
+
+def test_prompt_bounds_review_and_mood():
+    """Review 过长会挤掉后面的小节，也会让 COMM 标签过长。"""
+    from audio_style_workflow.style_parser import get_analysis_prompt
+
+    zh = get_analysis_prompt("zh")
+    assert "不超过 60 字" in zh
+    assert "2-3 个" in zh
