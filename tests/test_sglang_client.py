@@ -751,7 +751,7 @@ def test_audio_16k_prepare_payload(tmp_path):
     src = tmp_path / "src.flac"
     subprocess.run(
         [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-         "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         "-f", "lavfi", "-i", "anoisesrc=d=3:c=pink",
          "-ar", "48000", "-ac", "2", "-c:a", "flac", str(src)],
         check=True, capture_output=True,
     )
@@ -779,7 +779,7 @@ def test_audio_16k_codecs(tmp_path):
     src = tmp_path / "src.flac"
     subprocess.run(
         [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-         "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         "-f", "lavfi", "-i", "anoisesrc=d=3:c=pink",
          "-ar", "48000", "-ac", "2", "-c:a", "flac", str(src)],
         check=True, capture_output=True,
     )
@@ -791,3 +791,60 @@ def test_audio_16k_codecs(tmp_path):
         assert uri.startswith(expected)
         sizes[codec] = len(uri)
     assert sizes["mp3"] < sizes["wav"]
+
+
+def test_audio_16k_skips_when_result_is_bigger(tmp_path):
+    """低码率 MP3 转 16k WAV 会更大（256kbps > 128kbps），应直接发原文件。"""
+    import base64
+    import subprocess
+
+    from audio_style_workflow.splitter import resolve_ffmpeg
+
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("本机没有 ffmpeg")
+
+    def make(name, codec_args):
+        path = tmp_path / name
+        subprocess.run(
+            [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+             "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+             "-ar", "44100", "-ac", "2", *codec_args, str(path)],
+            check=True, capture_output=True,
+        )
+        return path
+
+    low = make("low.mp3", ["-c:a", "libmp3lame", "-b:a", "128k"])
+
+    client = SglangMusicClient(audio_base64=True, audio_16k=True, audio_codec="wav")
+    uri = client._audio_payload(low)
+    head, _, body = uri.partition(",")
+    # 回退成原文件：MIME 是 mp3，字节数与源文件一致
+    assert head == "data:audio/mpeg;base64"
+    assert len(base64.b64decode(body, validate=True)) == low.stat().st_size
+
+
+def test_audio_16k_converts_when_smaller(tmp_path):
+    """高码率/无损文件转 16k 才会变小。"""
+    import base64
+    import subprocess
+
+    from audio_style_workflow.splitter import resolve_ffmpeg
+
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("本机没有 ffmpeg")
+
+    src = tmp_path / "noise.flac"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "anoisesrc=d=3:c=pink",
+         "-ar", "44100", "-ac", "2", "-c:a", "flac", str(src)],
+        check=True, capture_output=True,
+    )
+
+    client = SglangMusicClient(audio_base64=True, audio_16k=True, audio_codec="wav")
+    uri = client._audio_payload(src)
+    head, _, body = uri.partition(",")
+    assert head == "data:audio/wav;base64"
+    assert len(base64.b64decode(body, validate=True)) < src.stat().st_size

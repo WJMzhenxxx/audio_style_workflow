@@ -97,7 +97,7 @@ python -m audio_style_workflow.main "D:\我的音乐" \
 | `--sglang-base URL` | 显式指定 sglang 地址（优先级最高） |
 | `--sglang-audio-base64` | 音频以 `data:` URL 内联，无需共享文件系统 |
 | `--sglang-path-map LOCAL=REMOTE` | 本地路径前缀映射为服务端路径，可重复 |
-| `--sglang-audio-16k` | 发送前整首转 16 kHz 单声道（模型内部就按 16k 解码，省 80%~97% 带宽） |
+| `--sglang-audio-16k` | 发送前整首转 16 kHz 单声道（省 80%~97% 带宽；转完反而更大时自动跳过） |
 | `--sglang-audio-codec {wav,flac,mp3,opus}` | `--sglang-audio-16k` 的输出格式，默认 `wav`（无损） |
 | `--sglang-audio-bitrate` | mp3/opus 码率，默认 `64k` |
 | `--sglang-clip SECONDS` | 只发送前/中 N 秒（仅用于降低体积，会丢信息） |

@@ -472,6 +472,15 @@ class SglangMusicClient(SongAnalysisClient):
             data = out.read_bytes()
 
         original = audio_path.stat().st_size
+        # 低码率 mp3 解码成 16k/16bit PCM 反而更大（256kbps > 128kbps），
+        # 此时直接发原文件——模型内部同样会重采样到 16k，体积更小且无质量损失。
+        if clip <= 0 and len(data) >= original:
+            logger.info(
+                "[sglang] %s 预处理后反而更大（%.1f MB -> %.1f MB），跳过转换，直接发送原文件",
+                audio_path.name, original / 1e6, len(data) / 1e6,
+            )
+            return None
+
         if data:
             logger.info(
                 "[sglang] %s 预处理: %.1f MB -> %.1f MB（16k 单声道 %s%s）",

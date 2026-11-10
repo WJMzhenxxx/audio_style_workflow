@@ -67,6 +67,16 @@ sglang serve --model-path ./weights/MOSS-Music-8B-Instruct --trust-remote-code
 
 > 库里若是 **WAV**，原始文件尤其大（44.1k 立体声约 10 MB/分钟），更要开 `--sglang-audio-16k`。
 
+**转完更大就自动跳过**：16k/16bit 单声道 PCM 固定 256 kbps，比 128 kbps 的
+MP3 还大。遇到这种源文件（实测 3.2 MB → 6.0 MB）会直接发原文件——模型内部
+同样重采样到 16k，体积更小且无质量损失。判断只在**没有截取**时生效：
+
+| 源 | 原始 | 16k wav | 决策 |
+| --- | ---: | ---: | --- |
+| 128 kbps mp3（30s） | 481 KB | 960 KB | 发原文件 |
+| 320 kbps mp3（30s） | 1203 KB | 960 KB | 转 16k |
+| 无损 flac（30s，真实音乐） | 3599 KB | 960 KB | 转 16k |
+
 `wav` 是 16k/16bit PCM，与模型输入完全一致（无损）；`mp3/opus` 更小但有损，
 对流派/BPM 判断影响很小。注意 16k 单声道 FLAC 反而比 WAV 大（密集混音压不动），
 所以默认用 `wav`。
