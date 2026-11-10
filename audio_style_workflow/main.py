@@ -61,6 +61,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="把本地路径前缀映射为服务端可见路径，可重复。例：--sglang-path-map \"C:\\music=/data/music\"（服务端读不到客户端路径时必须用）")
     client.add_argument("--sglang-clip", type=int, default=0, metavar="SECONDS",
                         help="只取这么长的音频送模型（0=整首）。仅用于降低请求体积；实测模型本就会完整摄入整首，截取会丢信息")
+    client.add_argument("--sglang-audio-16k", action="store_true",
+                        help="发送前把整首转成 16 kHz 单声道（模型内部就按 16k 解码，可省 80%%~97%% 带宽）")
+    client.add_argument("--sglang-audio-codec", choices=["wav", "flac", "mp3", "opus"], default="wav",
+                        help="--sglang-audio-16k 的输出格式，默认 wav（无损）；mp3/opus 更小但有损")
+    client.add_argument("--sglang-audio-bitrate", default="64k",
+                        help="--sglang-audio-codec 为 mp3/opus 时的码率，默认 64k")
     client.add_argument("--sglang-clip-mode", choices=["middle", "start"], default="middle",
                         help="--sglang-clip 的截取位置：middle=中间窗口（默认）；start=从头")
     client.add_argument("--sglang-audio-base64", action="store_true",
@@ -153,6 +159,9 @@ def build_client(args: argparse.Namespace):
             audio_base64=getattr(args, "sglang_audio_base64", False),
             clip_seconds=getattr(args, "sglang_clip", 0),
             clip_mode=getattr(args, "sglang_clip_mode", "middle"),
+            audio_16k=getattr(args, "sglang_audio_16k", False),
+            audio_codec=getattr(args, "sglang_audio_codec", "wav"),
+            audio_bitrate=getattr(args, "sglang_audio_bitrate", "64k"),
             ffmpeg=args.ffmpeg,
         )
     if args.local:

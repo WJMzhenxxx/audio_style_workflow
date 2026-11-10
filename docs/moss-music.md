@@ -51,6 +51,24 @@ sglang serve --model-path ./weights/MOSS-Music-8B-Instruct --trust-remote-code
 
 严格线性 → 模型完整"听"了整首歌，**不存在只听前 30 秒**。
 
+### 发送前转 16 kHz 能省多少带宽
+
+模型内部固定按 16 kHz 单声道解码（`MelConfig.mel_sr = 16000`），所以高采样率
+无损文件的额外信息**对模型无用**，客户端先转换再 base64 可省 80%~97%：
+
+（实测源文件：48 kHz / 24 bit / 立体声 FLAC，194.6 秒，43.3 MB）
+
+| 发送方式 | 实际字节 | base64 后 | 节省 |
+| --- | ---: | ---: | ---: |
+| 原文件（默认） | 43.27 MB | 57.69 MB | — |
+| `--sglang-audio-16k`（wav） | 6.23 MB | 8.30 MB | 85.6% |
+| `--sglang-audio-16k --sglang-audio-codec mp3` | 1.56 MB | 2.08 MB | 96.4% |
+| `--sglang-audio-16k --sglang-audio-codec opus --sglang-audio-bitrate 48k` | 1.20 MB | 1.59 MB | 97.2% |
+
+`wav` 是 16k/16bit PCM，与模型输入完全一致（无损）；`mp3/opus` 更小但有损，
+对流派/BPM 判断影响很小。注意 16k 单声道 FLAC 反而比 WAV 大（密集混音压不动），
+所以默认用 `wav`。
+
 因此 `--sglang-clip N` 只用于**降低请求体积**（60 秒约 2.5MB vs 整首 57.7MB），
 不要指望它提升准确率：实测截取 30 秒后同一首歌的标签完全变样（`Aphonia` 整首是
 `Dream Pop/Ambient Pop/Synth-Pop`，前 30 秒却成了 `ambient/new age/film score`）。

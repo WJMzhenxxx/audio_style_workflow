@@ -735,3 +735,59 @@ def test_degenerate_repetition_detected_and_trimmed():
     trimmed = _trim_repetition(looping, info[0])
     assert len(trimmed) < len(looping) / 3
     assert "已在此截断" in trimmed
+
+
+def test_audio_16k_prepare_payload(tmp_path):
+    """--sglang-audio-16k：整首转 16k 单声道，体积大幅下降。"""
+    import base64
+    import subprocess
+
+    from audio_style_workflow.splitter import resolve_ffmpeg
+
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("本机没有 ffmpeg")
+
+    src = tmp_path / "src.flac"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         "-ar", "48000", "-ac", "2", "-c:a", "flac", str(src)],
+        check=True, capture_output=True,
+    )
+
+    client = SglangMusicClient(audio_base64=True, audio_16k=True, audio_codec="wav")
+    uri = client._audio_payload(src)
+    head, _, body = uri.partition(",")
+    assert head == "data:audio/wav;base64"
+
+    raw = base64.b64decode(body, validate=True)
+    # 16k 单声道 16bit：3 秒约 96 KB（纯正弦的 FLAC 压得极狠，不能拿源文件比大小）
+    assert 80_000 < len(raw) < 110_000
+
+
+def test_audio_16k_codecs(tmp_path):
+    """codec 选择决定 MIME 与体积：opus < mp3 < wav。"""
+    import subprocess
+
+    from audio_style_workflow.splitter import resolve_ffmpeg
+
+    ffmpeg = resolve_ffmpeg()
+    if ffmpeg is None:
+        pytest.skip("本机没有 ffmpeg")
+
+    src = tmp_path / "src.flac"
+    subprocess.run(
+        [ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         "-ar", "48000", "-ac", "2", "-c:a", "flac", str(src)],
+        check=True, capture_output=True,
+    )
+
+    sizes = {}
+    for codec, expected in (("wav", "data:audio/wav"), ("mp3", "data:audio/mpeg")):
+        client = SglangMusicClient(audio_base64=True, audio_16k=True, audio_codec=codec)
+        uri = client._audio_payload(src)
+        assert uri.startswith(expected)
+        sizes[codec] = len(uri)
+    assert sizes["mp3"] < sizes["wav"]

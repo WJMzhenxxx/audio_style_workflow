@@ -295,6 +295,9 @@ class SglangMusicClient(SongAnalysisClient):
         audio_base64: bool = False,
         clip_seconds: int = 0,
         clip_mode: Literal["middle", "start"] = "middle",
+        audio_16k: bool = False,
+        audio_codec: Literal["wav", "flac", "mp3", "opus"] = "wav",
+        audio_bitrate: str = "64k",
         ffmpeg: Optional[str] = None,
         timeout: float = 600.0,
         retries: int = 2,
@@ -335,6 +338,11 @@ class SglangMusicClient(SongAnalysisClient):
         #: >0 时只截取这么多秒送模型（避开前奏，也让模型"听到"副歌）
         self.clip_seconds = max(0, int(clip_seconds))
         self.clip_mode = clip_mode
+        #: 发送前统一转 16 kHz 单声道（模型内部就是按 16k 解码，高采样率无损文件
+        #: 原始信息用不上，转完再 base64 可省 80%~97% 带宽）
+        self.audio_16k = bool(audio_16k)
+        self.audio_codec = audio_codec
+        self.audio_bitrate = audio_bitrate
         self._ffmpeg = ffmpeg
 
         #: 连续返回相同文本的计数（用于诊断"音频没被读到"）
@@ -379,59 +387,98 @@ class SglangMusicClient(SongAnalysisClient):
         if not self.audio_base64:
             return self._server_path(audio_path)
 
+        if self.clip_seconds > 0 or self.audio_16k:
+            prepared = self._prepare_audio(audio_path)
+            if prepared is not None:
+                data, mime = prepared
+                if len(data) > _BASE64_WARN_BYTES:
+                    logger.warning(
+                        "[sglang] %s 预处理后仍有 %.1f MB（base64 约 %.1f MB），"
+                        "可改用 --sglang-audio-codec mp3 进一步压缩",
+                        audio_path.name, len(data) / 1e6, len(data) * 4 / 3 / 1e6,
+                    )
+                encoded = base64.b64encode(data).decode("ascii")
+                return f"data:{mime};base64,{encoded}"
+
         size = audio_path.stat().st_size
         if size > _BASE64_WARN_BYTES:
             logger.warning(
-                "[sglang] %s 体积 %.1f MB，base64 内联后约 %.1f MB，请求会明显变慢；"
-                "大文件建议改用 --sglang-path-map + 共享文件系统",
+                "[sglang] %s 原始体积 %.1f MB（base64 约 %.1f MB）；"
+                "加 --sglang-audio-16k 可降到 1/5 以下，或改用 --sglang-path-map",
                 audio_path.name, size / 1e6, size * 4 / 3 / 1e6,
             )
-        if self.clip_seconds > 0:
-            clipped = self._clip_audio(audio_path)
-            if clipped is not None:
-                encoded = base64.b64encode(clipped).decode("ascii")
-                return f"data:audio/wav;base64,{encoded}"
-
         mime = _AUDIO_MIME.get(audio_path.suffix.lower(), "application/octet-stream")
         encoded = base64.b64encode(audio_path.read_bytes()).decode("ascii")
         return f"data:{mime};base64,{encoded}"
 
-    def _clip_audio(self, audio_path: Path) -> Optional[bytes]:
-        """截取一段音频并转成 16k 单声道 WAV 字节（模型内部也是按这个格式解码）。
+    #: 预处理输出的容器 -> (ffmpeg 编码参数, MIME)
+    _CODECS: dict[str, tuple[list[str], str]] = {
+        "wav": (["-c:a", "pcm_s16le"], "audio/wav"),
+        "flac": (["-c:a", "flac"], "audio/flac"),
+        "mp3": (["-c:a", "libmp3lame"], "audio/mpeg"),
+        "opus": (["-c:a", "libopus"], "audio/ogg"),
+    }
 
-        ``middle`` 取中间窗口（避开前奏，通常能覆盖主歌/副歌），
-        ``start`` 从头截取。ffmpeg 不可用时返回 None（退回整首）。
+    def _prepare_audio(self, audio_path: Path) -> Optional[tuple[bytes, str]]:
+        """按需截取/重采样后返回 ``(字节, MIME)``。
+
+        模型内部固定按 **16 kHz 单声道** 解码（``MelConfig.mel_sr``），所以：
+
+        - ``audio_16k=True`` 时把整首转成 16k 单声道再 base64，省 80%~97% 带宽；
+        - ``clip_seconds>0`` 时再截取一段（``middle`` 取中段，``start`` 从头）。
+
+        ffmpeg 不可用或失败时返回 ``None``，调用方退回原始文件。
         """
         ffmpeg = resolve_ffmpeg(self._ffmpeg)
         if not ffmpeg:
-            logger.warning("[sglang] 找不到 ffmpeg，无法截取音频，改为发送整首")
+            logger.warning("[sglang] 找不到 ffmpeg，无法预处理音频，改为发送原文件")
             return None
-        duration = _audio_duration_seconds(audio_path)
-        clip = self.clip_seconds
+
+        codec_args, mime = self._CODECS.get(self.audio_codec, self._CODECS["wav"])
+        if self.audio_codec in ("mp3", "opus"):
+            codec_args = codec_args + ["-b:a", self.audio_bitrate]
+
         start = 0.0
-        if duration and duration > clip:
-            if self.clip_mode == "middle":
-                start = max(0.0, (duration - clip) / 2)
-            else:
-                start = 0.0
-            clip = min(clip, duration)
-        with tempfile.TemporaryDirectory(prefix="asw_clip_") as tmpdir:
-            out = Path(tmpdir) / "clip.wav"
-            cmd = [
-                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
-                "-ss", f"{start:.3f}", "-t", f"{clip:.3f}",
+        clip = 0.0
+        if self.clip_seconds > 0:
+            duration = _audio_duration_seconds(audio_path)
+            clip = float(self.clip_seconds)
+            if duration and duration > clip:
+                if self.clip_mode == "middle":
+                    start = max(0.0, (duration - clip) / 2)
+                clip = min(clip, duration)
+
+        suffix = "." + (self.audio_codec if self.audio_codec != "opus" else "opus")
+        with tempfile.TemporaryDirectory(prefix="asw_prep_") as tmpdir:
+            out = Path(tmpdir) / f"prepared{suffix}"
+            cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+            if clip > 0:
+                cmd += ["-ss", f"{start:.3f}", "-t", f"{clip:.3f}"]
+            cmd += [
                 "-i", str(audio_path),
-                "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(out),
+                "-vn", "-ac", "1", "-ar", "16000",
+                *codec_args, str(out),
             ]
             try:
                 subprocess.run(cmd, check=True, capture_output=True)
             except subprocess.CalledProcessError as exc:
                 detail = (exc.stderr or b"").decode("utf-8", "replace")[-300:]
-                logger.warning("[sglang] ffmpeg 截取失败（%s），改为发送整首: %s", audio_path.name, detail)
+                logger.warning(
+                    "[sglang] ffmpeg 预处理失败（%s），改为发送原文件: %s", audio_path.name, detail
+                )
                 return None
             if not out.is_file():
                 return None
-            return out.read_bytes()
+            data = out.read_bytes()
+
+        original = audio_path.stat().st_size
+        if data:
+            logger.info(
+                "[sglang] %s 预处理: %.1f MB -> %.1f MB（16k 单声道 %s%s）",
+                audio_path.name, original / 1e6, len(data) / 1e6, self.audio_codec,
+                f"，截取 {int(clip)}s" if clip > 0 else "",
+            )
+        return data, mime
 
     @staticmethod
     def _describe_audio(audio_payload: str) -> str:
