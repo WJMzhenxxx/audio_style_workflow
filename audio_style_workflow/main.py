@@ -73,7 +73,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="分析 prompt 的语言，从而决定模型用什么语言输出（默认 zh）")
     client.add_argument("--model-id", default=os.environ.get("SONG_ANALYZER_MODEL_ID", "nvidia/music-flamingo-2601-hf"), help="本地 MusicFlamingo 模型 ID（配合 --local）")
     client.add_argument("--max-new-tokens", type=int, default=500, help="模型生成 token 上限（--local / --sglang 共用；sglang 建议 1024）")
-    client.add_argument("--concurrency", type=int, default=1, help="分析端点并发请求数（本地模型会自动串行化）")
+    client.add_argument("--concurrency", type=int, default=1,
+                        help="分析并发数；批处理与逐曲模式都生效（本地模型会自动串行化）")
 
     tags = parser.add_argument_group("标签")
     tags.add_argument("--custom-tag", default=DEFAULT_CUSTOM_KEY, help="自定义风格标签键名（FLAC: VorbisComment 字段 / MP3: TXXX 帧）")

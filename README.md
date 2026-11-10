@@ -63,13 +63,13 @@ python -m audio_style_workflow.main "D:\我的音乐" --local --skip-scanned
 | 顺序 | 先全部分析 → 再统一解析 → 再统一写标签 | 每首：分析 → 解析 → 写标签 → 记扫描记录 |
 | 中断后 | 标签已写但扫描记录可能没落盘 | 标签与扫描记录都已落盘，`--skip-scanned` 直接续跑 |
 | 全局视角 | 可先看全部分析结果 | 无法先汇总再决定 |
-| 并发 | `--concurrency` 在本阶段内并行 | 天然串行 |
+| 并发 | `--concurrency` 在本阶段内并行 | 同样支持 `--concurrency`（每首独立） |
 
-大批量、可能被打断的场景建议逐曲模式：
+大批量、可能被打断的场景建议逐曲模式（多首并发 + 每首完成即落盘）：
 
 ```bash
 python -m audio_style_workflow.main "D:\我的音乐" \
-    --sglang --sglang-audio-base64 --per-song --state-flush-every 1
+    --sglang --sglang-audio-base64 --per-song --concurrency 4 --state-flush-every 1
 ```
 
 ## 常用参数
@@ -103,7 +103,7 @@ python -m audio_style_workflow.main "D:\我的音乐" \
 | `--prompt-lang {zh,en}` | 默认 `zh`：风格名/Tempo/Key 英文，评述中文 |
 | `--max-new-tokens` | 生成上限，sglang 建议 1024~2048 |
 | `--temperature/--top-p/--top-k` | 采样参数，默认贪心（`temperature 0`） |
-| `--concurrency` | 分析并发数（本地模型自动串行） |
+| `--concurrency` | 分析并发数，批处理与逐曲模式都生效（本地模型自动串行） |
 | `--llm-model` | 非结构化响应的 LLM 兜底解析 |
 | `--log-dir DIR` | 日志目录，默认 `log/` |
 

@@ -69,7 +69,7 @@ thinking 模型常把答案写在 `reasoning_content` 里（思考段没闭合�
 | `--skip-scanned` | ✅ 前提是扫描记录已落盘。每 `--state-flush-every` 条（默认 10）落盘一次，Ctrl+C / 异常时会在 `finally` 再落盘；只有被强杀（kill -9 / 断电）才丢最后几条 |
 | `--skip-tagged` | ✅ 读音频里的标签，逐曲模式下每首写完即在盘上；分阶段批处理要等 `write_tags` 阶段 |
 
-推荐：`--per-song --skip-scanned`，对时间敏感可加 `--state-flush-every 1`。
+推荐：`--per-song --skip-scanned`，对时间敏感可加 `--state-flush-every 1`，并调大 `--concurrency`（逐曲模式同样支持并发，状态文件写入已加锁）。
 
 ## 日志在哪
 

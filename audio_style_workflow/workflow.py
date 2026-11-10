@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -507,8 +508,18 @@ def step_per_song(
         logger.info("没有需要分析的歌曲（全部跳过）")
         return state
 
-    logger.info("逐曲模式：%d 首待处理（每首分析完立即写标签）", len(pending))
-    for index, task in enumerate(pending, 1):
+    workers = max(1, min(config.concurrency or 1, len(pending)))
+    if workers > 1:
+        logger.info(
+            "逐曲模式：%d 首待处理，并发 %d（每首完成即写标签）", len(pending), workers
+        )
+    else:
+        logger.info("逐曲模式：%d 首待处理（每首分析完立即写标签）", len(pending))
+
+    counter = {"done": 0}
+    counter_lock = threading.Lock()
+
+    def run_one(task: TrackTask) -> None:
         # 分析（顺带写 details 明细）
         _analyze_one(task, client, recorder)
 
@@ -517,6 +528,9 @@ def step_per_song(
         step_parse(single, config, parser, recorder)
         step_tag(single, config, store)
 
+        with counter_lock:
+            counter["done"] += 1
+            index = counter["done"]
         if task.error:
             logger.info("[%d/%d] %s 失败: %s", index, len(pending), task.path.name, task.error)
         elif task.skip_reason:
@@ -527,6 +541,21 @@ def step_per_song(
                 index, len(pending), task.path.name,
                 "/".join(task.styles) or "-", task.bpm, task.mood, task.score, task.tagged,
             )
+
+    if workers == 1:
+        for task in pending:
+            run_one(task)
+        return state
+
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="per-song") as pool:
+        futures = {pool.submit(run_one, task): task for task in pending}
+        for future in as_completed(futures):
+            task = futures[future]
+            try:
+                future.result()
+            except Exception as exc:  # 兜底：单首异常不影响其余
+                task.error = task.error or f"{type(exc).__name__}: {exc}"
+                logger.warning("[per-song] %s 异常: %s", task.path.name, exc)
     return state
 
 

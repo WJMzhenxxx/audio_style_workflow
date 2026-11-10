@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import os
 import tempfile
 from datetime import datetime, timezone
@@ -46,6 +47,8 @@ class ScanStateStore:
         self._dirty = False
         #: 自上次落盘以来新增/更新的条目数（用于定期保存，避免中断丢进度）
         self._since_save = 0
+        #: 并发写标签时需要串行化状态变更与落盘
+        self._lock = threading.RLock()
 
     # ------------------------------------------------------------------
     # 基本属性
@@ -81,6 +84,10 @@ class ScanStateStore:
 
     def save(self) -> None:
         """原子写入状态文件（.tmp -> replace）。"""
+        with self._lock:
+            self._save_locked()
+
+    def _save_locked(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "version": STATE_VERSION,
@@ -157,30 +164,33 @@ class ScanStateStore:
         fp = self.fingerprint(path)
         if fp is None:
             return
-        entry = self._entries.get(self._key(path), {})
-        entry.update(
-            {
-                "size": fp[0],
-                "mtime": fp[1],
-                "marked_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
-        if styles:
-            entry["styles"] = list(styles)
-        self._entries[self._key(path)] = entry
-        self._dirty = True
-        self._since_save += 1
+        with self._lock:
+            key = self._key(path)
+            entry = self._entries.get(key, {})
+            entry.update(
+                {
+                    "size": fp[0],
+                    "mtime": fp[1],
+                    "marked_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            if styles:
+                entry["styles"] = list(styles)
+            self._entries[key] = entry
+            self._dirty = True
+            self._since_save += 1
 
     def mark_album(self, tta: Path, cue: Optional[Path]) -> None:
         """把一张整轨专辑记入状态（专辑所有分轨都成功后调用）。"""
         self.mark_scanned(tta)
-        entry = self._entries[self._key(tta)]
-        if cue is not None:
-            cue_fp = self.fingerprint(cue)
-            if cue_fp is not None:
-                entry["cue_size"], entry["cue_mtime"] = cue_fp
-        entry["is_album"] = True
-        entry.setdefault("marked_at", datetime.now(timezone.utc).isoformat())
+        with self._lock:
+            entry = self._entries[self._key(tta)]
+            if cue is not None:
+                cue_fp = self.fingerprint(cue)
+                if cue_fp is not None:
+                    entry["cue_size"], entry["cue_mtime"] = cue_fp
+            entry["is_album"] = True
+            entry.setdefault("marked_at", datetime.now(timezone.utc).isoformat())
 
     @property
     def dirty(self) -> bool:
@@ -192,10 +202,11 @@ class ScanStateStore:
         逐曲/分批写标签时定期落盘，进程被中断也只丢最后几条进度，
         重跑用 ``--skip-scanned`` 即可续跑。
         """
-        if every and every > 0 and self._since_save >= every:
-            self.save()
-            return True
-        return False
+        with self._lock:
+            if every and every > 0 and self._since_save >= every:
+                self._save_locked()
+                return True
+            return False
 
     # ------------------------------------------------------------------
     # 内部

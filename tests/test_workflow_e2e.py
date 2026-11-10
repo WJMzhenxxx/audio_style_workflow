@@ -402,3 +402,37 @@ def test_per_song_resume_after_interrupt(library):
     )
     assert report.skipped_scanned >= 3
     assert report.failed == []
+
+
+def test_per_song_concurrency_parallelizes(library):
+    """--per-song 也遵守 --concurrency：峰值并发应大于 1，结果仍全部写回。"""
+    import threading
+    import time
+
+    from audio_style_workflow.tagger import get_styles
+
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    class SlowClient(SongAnalysisClient):
+        name = "slow"
+
+        def analyze(self, audio_path):
+            with lock:
+                state["active"] += 1
+                state["peak"] = max(state["peak"], state["active"])
+            time.sleep(0.15)
+            with lock:
+                state["active"] -= 1
+            return {"status": "ok", "styles": ["Pop"], "description": "**Genre**: Pop"}
+
+    report = run_workflow(
+        SlowClient(), StyleParser(),
+        WorkflowConfig(root=library, per_song=True, concurrency=4),
+    )
+
+    assert report.tagged == 5
+    assert state["peak"] >= 2, state
+    for path in library.rglob("*"):
+        if path.is_file() and path.suffix.lower() in (".mp3", ".flac"):
+            assert get_styles(path) == "Pop"
