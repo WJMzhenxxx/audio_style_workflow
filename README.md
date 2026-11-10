@@ -180,6 +180,45 @@ python -m audio_style_workflow.main "D:\我的音乐" --sglang --skip-scanned
 首次全量处理并生成记录，之后只处理新增/变动的文件；`--reset-state` 强制全量。
 `--dry-run` 不读写扫描记录。
 
+## 标签导出 / 导入
+
+把标签导出成 JSON，换台机器或换个目录结构也能灌回去：
+
+```bash
+python export_tag.py -i D:\我的音乐 -o tags.json
+python import_tag.py -i tags.json -o E:\我的音乐
+```
+
+匹配优先级：**相对路径 → 文件 MD5 → 音频 MD5 → 文件名**（忽略大小写，同名多份时用 MD5 收敛）。
+
+- **文件 MD5**：字节完全一致的副本（整库拷贝）直接命中；
+- **音频 MD5**：解码后 PCM 的 md5（`ffmpeg -f md5`），重写标签、改文件名后仍稳定，
+  所以「干净的原始文件 + 另一个库的标签」也能对上；
+- 导出还会记录 `size`、基础标签与（TTA 分轨的）来源信息。
+
+TTA 整轨：JSON 里记 `tta_rel_path` / `tta_md5` / `cue_md5` / `track_no`，
+导入时若分轨还不存在，会**先按 CUE 切分再写标签**（`--no-split` 可关闭）。
+
+```json
+{
+  "version": 1,
+  "tag_keys": {"custom": "GENRE", "joiner": "; "},
+  "tracks": [
+    {
+      "rel_path": "album/01 - Song.flac",
+      "name": "01 - Song",
+      "md5": "<文件 md5>",
+      "audio_md5": "<解码音频 md5>",
+      "tags": {"GENRE": "Pop; Dream Pop", "BPM": "120", "RATING": "9", "COMMENT": "…"},
+      "album": {"tta_rel_path": "album/album.tta", "tta_md5": "…", "track_no": 1}
+    }
+  ]
+}
+```
+
+常用选项：`--dry-run`（只匹配不写）、`--include-untagged`（连无标签文件也记录）、
+`--no-audio-hash`（跳过较慢的音频 md5）、`--custom-tag` / `--joiner`（覆盖键名）、`--ffmpeg`。
+
 ## 流程细节
 
 - **TTA 切分**：TTA 与 FLAC 均为无损，逐轨转 FLAC 无质量损失；切点取 `INDEX 01`
@@ -201,5 +240,6 @@ python -m pytest tests/ -v
 
 ## 更多文档
 
+- `export_tag.py` / `import_tag.py`：标签导出与导入（见上节）
 - [docs/moss-music.md](docs/moss-music.md)：MOSS-Music 部署、参数、prompt 设计与实测数据
 - [docs/troubleshooting.md](docs/troubleshooting.md)：输出异常、复读、续跑、日志排查

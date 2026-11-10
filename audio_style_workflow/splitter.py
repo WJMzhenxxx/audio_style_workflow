@@ -41,6 +41,13 @@ class SplitError(RuntimeError):
     """TTA 切分失败。"""
 
 
+def expected_track_filename(track) -> str:
+    """按 CUE 轨推算切分后的分轨文件名（与 :meth:`TtaSplitter.split` 一致）。"""
+    title = sanitize_filename(track.title)
+    stem = f"{track.number:02d} - {title}" if title else f"Track{track.number:02d}"
+    return f"{stem}.flac"
+
+
 class TtaSplitter:
     """按 CUE 把 TTA 整轨切成带基础标签的 FLAC 分轨。"""
 
@@ -124,9 +131,7 @@ class TtaSplitter:
     # ------------------------------------------------------------------
     @staticmethod
     def _output_name(track) -> str:
-        title = sanitize_filename(track.title)
-        stem = f"{track.number:02d} - {title}" if title else f"Track{track.number:02d}"
-        return f"{stem}.flac"
+        return expected_track_filename(track)
 
     def _extract(self, tta: Path, start: float, end: Optional[float], target: Path) -> None:
         args = ["-hide_banner", "-loglevel", "error", "-y", "-i", str(tta), "-vn"]

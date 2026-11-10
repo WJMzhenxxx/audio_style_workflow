@@ -269,10 +269,14 @@ def write_extra_tags(
                 tags.setall("TMOO", [TMOO(encoding=3, text=mood_value)])
                 written["mood"] = mood_value
             if score_value is not None:
-                # POPM：Windows 从这里读「星级」
+                # POPM：Windows 从这里读「星级」（只有 5 档，9 分会退化成 4 星）
                 stars = max(1, min(5, round(score_value / 2)))
                 tags.setall("POPM", [POPM(
                     email=_POPM_EMAIL, rating=_POPM_BY_STARS[stars], count=0,
+                )])
+                # 再存一份 0-10 的原始分，保证导出/导入无损
+                tags.setall("TXXX:RATING", [TXXX(
+                    encoding=3, desc="RATING", text=str(score_value),
                 )])
                 written["score"] = str(score_value)
             if review_value is not None:
@@ -344,12 +348,16 @@ def read_extra_tags(
             info["key"] = _frame_first("TKEY")
             info["mood"] = _frame_first("TMOO")
             info["tempo"] = _frame_first(f"TXXX:{tempo_key}")
-            popm = tags.getall("POPM")
-            if popm:
-                # 反查星级阈值，再换算回 0-10
-                byte = int(popm[0].rating)
-                stars = min(_POPM_BY_STARS, key=lambda s: abs(_POPM_BY_STARS[s] - byte))
-                info["score"] = str(stars * 2)
+            exact = _frame_first("TXXX:RATING")
+            if exact and exact.strip().isdigit():
+                info["score"] = exact.strip()
+            else:
+                popm = tags.getall("POPM")
+                if popm:
+                    # 反查星级阈值，再换算回 0-10（近似）
+                    byte = int(popm[0].rating)
+                    stars = min(_POPM_BY_STARS, key=lambda s: abs(_POPM_BY_STARS[s] - byte))
+                    info["score"] = str(stars * 2)
             comms = tags.getall("COMM")
             if comms and getattr(comms[0], "text", None):
                 info["review"] = str(comms[0].text[0])
