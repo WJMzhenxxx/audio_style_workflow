@@ -226,3 +226,38 @@ def test_score_and_review_frames(tmp_path):
 
     info = read_extra_tags(mp3)
     assert info["score"] == "8" and info["review"] == "旋律抓耳，制作干净。"
+
+
+def test_wav_tags_round_trip(tmp_path):
+    """WAV 用 RIFF 里的 ID3 chunk，帧名与 MP3 一致。"""
+    from audio_style_workflow.tagger import (
+        get_styles,
+        read_basic_info,
+        read_extra_tags,
+        write_basic_tags,
+        write_extra_tags,
+        write_styles,
+    )
+
+    wav = tmp_path / "track.wav"
+    subprocess.run(
+        [resolve_ffmpeg(), "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+         "-ar", "44100", "-ac", "2", str(wav)],
+        check=True, capture_output=True,
+    )
+
+    write_styles(wav, ["Pop", "Dream Pop"])
+    write_extra_tags(wav, bpm=120, tempo="Moderato", key="C major",
+                     mood="温暖, 舒缓", score=9, review="不错。")
+    write_basic_tags(wav, title="Track", artist="Artist", album="Album", track_no=3)
+
+    assert get_styles(wav) == "Pop; Dream Pop"
+    extra = read_extra_tags(wav)
+    assert extra["bpm"] == "120"
+    assert extra["key"] == "C major"
+    assert extra["mood"] == "温暖, 舒缓"
+    assert extra["score"] == "9"          # 靠 TXXX:RATING 保住精度
+    assert extra["review"] == "不错。"
+    basic = read_basic_info(wav)
+    assert basic["title"] == "Track" and basic["track"] == "3"

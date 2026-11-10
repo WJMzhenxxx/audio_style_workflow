@@ -16,10 +16,13 @@ class AudioFormat(str, Enum):
 
     MP3 = "mp3"
     FLAC = "flac"
+    WAV = "wav"
 
     @classmethod
     def from_path(cls, path: Path) -> Optional["AudioFormat"]:
         suffix = Path(path).suffix.lower().lstrip(".")
+        if suffix == "wave":            # .wave 也是 WAV
+            suffix = "wav"
         try:
             return cls(suffix)
         except ValueError:

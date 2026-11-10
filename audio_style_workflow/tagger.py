@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from mutagen.flac import FLAC
 from mutagen.id3 import (
@@ -82,6 +82,27 @@ def _mp3_frame_id(key: str) -> Optional[str]:
     return frame_cls.__name__ if frame_cls is not None else None
 
 
+def _open_id3(path: Path, fmt: AudioFormat) -> tuple[Any, Callable[[], None]]:
+    """打开 ID3 容器（MP3 / WAV），返回 ``(tags, save)``。
+
+    WAV 的 ID3 存在 RIFF 的 ``id3 `` chunk 里，mutagen 用 ``WAVE`` 类暴露同样的
+    ID3 接口，因此帧名（TCON/TMOO/POPM…）与 MP3 完全一致。
+    """
+    if fmt is AudioFormat.WAV:
+        from mutagen.wave import WAVE
+
+        audio = WAVE(str(path))
+        if audio.tags is None:
+            audio.add_tags()
+        return audio.tags, audio.save
+
+    try:
+        tags = ID3(str(path))
+    except ID3NoHeaderError:
+        tags = ID3()
+    return tags, lambda: tags.save(str(path), v2_version=4)
+
+
 def _set_mp3_text(tags: ID3, key: str, value: str) -> None:
     """按标准帧写；无标准帧的键回落到 ``TXXX:<key>``。"""
     frame_cls = _MP3_STANDARD_FRAMES.get(key.strip().upper())
@@ -131,13 +152,10 @@ def write_styles(
             audio = FLAC(str(path))
             audio[key] = [value]
             audio.save()
-        elif fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                tags = ID3()
+        elif fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, save = _open_id3(path, fmt)
             _set_mp3_text(tags, key, value)
-            tags.save(str(path), v2_version=4)
+            save()
         else:
             raise TaggerError(f"暂不支持向 {path.suffix or '<无后缀>'} 格式写标签: {path}")
     except TaggerError:
@@ -158,11 +176,8 @@ def get_styles(path: Path, *, key: str = DEFAULT_CUSTOM_KEY) -> Optional[str]:
             if isinstance(values, list) and values:
                 return str(values[0])
             return None
-        if fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                return None
+        if fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, _ = _open_id3(path, fmt)
             return _get_mp3_text(tags, key)
     except Exception:
         return None
@@ -254,11 +269,8 @@ def write_extra_tags(
                 audio[review_key] = [review_value]
                 written["review"] = review_value
             audio.save()
-        elif fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                tags = ID3()
+        elif fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, save = _open_id3(path, fmt)
             if bpm_value is not None:
                 tags.setall("TBPM", [TBPM(encoding=3, text=bpm_value)])
                 written["bpm"] = bpm_value
@@ -290,7 +302,7 @@ def write_extra_tags(
                     [TXXX(encoding=3, desc=tempo_key, text=tempo_value)],
                 )
                 written["tempo"] = tempo_value
-            tags.save(str(path), v2_version=4)
+            save()
         else:
             raise TaggerError(f"暂不支持向 {path.suffix or '<无后缀>'} 格式写音乐属性标签: {path}")
     except TaggerError:
@@ -332,11 +344,8 @@ def read_extra_tags(
             rating = _flac_first(rating_key)
             info["score"] = str(round(int(rating) / 10)) if rating and rating.isdigit() else None
             info["review"] = _flac_first(review_key)
-        elif fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                return info
+        elif fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, _ = _open_id3(path, fmt)
 
             def _frame_first(frame_name: str) -> Optional[str]:
                 frames = tags.getall(frame_name)
@@ -392,11 +401,8 @@ def write_basic_tags(
             if track_no is not None:
                 audio["TRACKNUMBER"] = [str(track_no)]
             audio.save()
-        elif fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                tags = ID3()
+        elif fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, save = _open_id3(path, fmt)
             if title is not None:
                 tags.setall("TIT2", [TIT2(encoding=3, text=title)])
             if artist is not None:
@@ -407,7 +413,7 @@ def write_basic_tags(
                 tags.setall("TALB", [TALB(encoding=3, text=album)])
             if track_no is not None:
                 tags.setall("TRCK", [TRCK(encoding=3, text=str(track_no))])
-            tags.save(str(path), v2_version=4)
+            save()
         else:
             raise TaggerError(f"暂不支持向 {path.suffix} 写基础标签")
     except TaggerError:
@@ -433,11 +439,8 @@ def read_basic_info(path: Path) -> dict[str, Optional[str]]:
                 values = audio.get(tag_key)
                 if isinstance(values, list) and values:
                     info[out_key] = str(values[0])
-        elif fmt is AudioFormat.MP3:
-            try:
-                tags = ID3(str(path))
-            except ID3NoHeaderError:
-                return info
+        elif fmt in (AudioFormat.MP3, AudioFormat.WAV):
+            tags, _ = _open_id3(path, fmt)
 
             def _first(frame_name: str) -> Optional[str]:
                 frames = tags.getall(frame_name)

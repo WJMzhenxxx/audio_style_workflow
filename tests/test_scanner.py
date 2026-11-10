@@ -93,3 +93,19 @@ def test_scan_skip_tagged_flags_tasks(tmp_path):
     assert state.tasks[0].skip_reason is not None
     state2 = scan_directory(tmp_path)  # 不开启 skip 时不标记
     assert state2.tasks[0].skip_reason is None
+
+
+def test_scanner_includes_wav(tmp_path):
+    """WAV（以及 .wave）也要被扫描进来。"""
+    from audio_style_workflow.scanner import scan_directory
+
+    (tmp_path / "a.wav").write_bytes(b"RIFF")
+    (tmp_path / "b.wave").write_bytes(b"RIFF")
+    (tmp_path / "c.mp3").write_bytes(b"x")
+    (tmp_path / "d.flac").write_bytes(b"x")
+    (tmp_path / "notes.txt").write_text("ignore me", encoding="utf-8")
+
+    state = scan_directory(tmp_path)
+    names = sorted(task.path.name for task in state.tasks)
+    assert names == ["a.wav", "b.wave", "c.mp3", "d.flac"]
+    assert len(state.warnings) == 0

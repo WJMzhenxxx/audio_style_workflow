@@ -17,7 +17,7 @@ from .tagger import get_styles
 
 logger = logging.getLogger(__name__)
 
-AUDIO_EXTS = {".mp3", ".flac"}
+AUDIO_EXTS = {".mp3", ".flac", ".wav", ".wave"}
 TTA_EXT = ".tta"
 CUE_EXT = ".cue"
 

@@ -599,7 +599,7 @@ def run_workflow(
 ) -> RunReport:
     """端到端执行工作流并返回报告。
 
-    - 未显式传入 splitter 时自动构造（ffmpeg 不可用则优雅降级，仅处理 mp3/flac）；
+    - 未显式传入 splitter 时自动构造（ffmpeg 不可用则优雅降级，仅处理 mp3/flac/wav）；
     - ``config.skip_scanned`` 且非 dry-run 时自动维护扫描记录：
       运行前加载（``reset_state`` 则先清空），成功任务在写标签后标记，
       专辑则在全部分轨成功后标记，结束时原子保存；dry-run 不产生任何
@@ -609,7 +609,7 @@ def run_workflow(
         try:
             splitter = TtaSplitter()
         except SplitError as exc:
-            logger.warning("%s（该异常不致命，将只直连处理 mp3/flac）", exc)
+            logger.warning("%s（该异常不致命，将只直连处理 mp3/flac/wav）", exc)
             splitter = None
 
     owns_store = False

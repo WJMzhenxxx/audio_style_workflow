@@ -219,7 +219,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         splitter: Optional[TtaSplitter] = TtaSplitter(args.ffmpeg)
     except SplitError as exc:
-        # ffmpeg 缺失时仍可处理 mp3/flac，TTA 会记入警告
+        # ffmpeg 缺失时仍可处理 mp3/flac/wav，TTA 会记入警告
         logger.warning("%s", exc)
         splitter = None
 

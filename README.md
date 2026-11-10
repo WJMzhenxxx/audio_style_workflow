@@ -1,7 +1,7 @@
 # Audio Style Workflow
 
-扫描音乐目录 → TTA 整轨按 CUE 切分 → 调用音乐理解模型 → 解析风格/BPM/调性/氛围/评分
-→ 写回音频标签（Windows 资源管理器可见）。
+扫描音乐目录（mp3 / flac / wav）→ TTA 整轨按 CUE 切分 → 调用音乐理解模型 →
+解析风格/BPM/调性/氛围/评分 → 写回音频标签（Windows 资源管理器可见）。
 
 工作流用 LangChain LCEL 组装成 `RunnableSequence`，每一步是纯函数（状态进、状态出），
 可单测、可替换、可单步调用。
@@ -116,7 +116,7 @@ python -m audio_style_workflow.main "D:\我的音乐" \
 
 ## 写入的标签
 
-| 属性 | FLAC（VorbisComment） | MP3（ID3v2.4） | 示例 |
+| 属性 | FLAC（VorbisComment） | MP3 / WAV（ID3v2.4） | 示例 |
 | --- | --- | --- | --- |
 | 流派 | `GENRE` | 标准帧 `TCON` | `Pop; Dream Pop` |
 | 氛围 | `MOOD` | 标准帧 `TMOO` | `温暖, 舒缓` |
@@ -126,6 +126,7 @@ python -m audio_style_workflow.main "D:\我的音乐" \
 | Tempo | `TEMPO` | `TXXX:TEMPO` | `Moderato` |
 | Key | `KEY` | 标准帧 `TKEY` | `C major` |
 
+- 支持 **mp3 / flac / wav**（WAV 用 RIFF 里的 ID3 chunk，帧名与 MP3 相同）；
 - 默认键会映射到**标准帧**，Windows 资源管理器「属性 → 详细信息」直接可见；
   自定义键（如 `--custom-tag MY_STYLE`）仍写 `TXXX:<key>`；
 - 提取是确定性的（无需 LLM），同时兼容缩略写法和中文标签；
